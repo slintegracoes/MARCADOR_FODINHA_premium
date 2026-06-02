@@ -80,6 +80,7 @@ function App(){
   const [todosZeradosResetado, setTodosZeradosResetado] = useState(false);
   const [teveEliminadoNaRodada, setTeveEliminadoNaRodada] = useState(false);
   const [resetarProximaRodada, setResetarProximaRodada] = useState(false);
+  const [manterDistribuidorProximaRodada, setManterDistribuidorProximaRodada] = useState(false);
   const [campeaoAnteriorNome, setCampeaoAnteriorNome] = useState("");
   const [listaBackups, setListaBackups] = useState([]);
   const [carregandoBackup, setCarregandoBackup] = useState(false);
@@ -279,6 +280,7 @@ function App(){
     setVidasIniciais(dados.vidasIniciais || 5);
     setCampeaoAnteriorNome(dados.campeaoAnteriorNome || "");
       setResetarProximaRodada(dados.resetarProximaRodada || false);
+      setManterDistribuidorProximaRodada(dados.manterDistribuidorProximaRodada || false);
     setTeveEliminadoNaRodada(false);
     setTodosZeradosResetado(false);
 
@@ -442,6 +444,37 @@ function App(){
 
   function formatarDinheiro(valor){
     return `R$ ${Number(valor || 0).toFixed(2).replace(".", ",")}`;
+  }
+
+  function obterLivresAtivos(lista = jogadores){
+
+    return lista
+      .filter(j => j.tirarEntrada === true || (j.recebeLivreDe || []).length > 0)
+      .map(j => ({
+        nome:j.nome,
+        livreProprio:j.tirarEntrada === true,
+        recebeLivreDe:(j.recebeLivreDe || [])
+          .map(id => lista.find(outro => outro.id === id)?.nome)
+          .filter(Boolean)
+      }));
+
+  }
+
+  function textoLivres(listaLivres){
+
+    if(!listaLivres || listaLivres.length === 0) return "NENHUM";
+
+    return listaLivres.map(item => {
+      const detalhes = [];
+
+      if(item.livreProprio) detalhes.push("LIVRE");
+      if(item.recebeLivreDe && item.recebeLivreDe.length > 0){
+        detalhes.push(`PAGA/RECEBE DE: ${item.recebeLivreDe.join(", ")}`);
+      }
+
+      return `${item.nome}${detalhes.length ? ` (${detalhes.join(" / ")})` : ""}`;
+    }).join(" • ");
+
   }
 
   const maxCartas = useMemo(() => {
@@ -649,26 +682,53 @@ const contasAcumuladas = useMemo(() => {
 
   function alternarJogadorAtivo(id){
 
+    const indexJogador = jogadores.findIndex(j => j.id === id);
+    const jogadorAtual = jogadores[indexJogador];
+
+    if(!jogadorAtual) return;
+
+    const ativoAtual = jogadorAtual.ativo !== false;
+    const novoAtivo = !ativoAtual;
+    const vaiMorrerAgora = jogadorAtual.vidas <= 0 && ativoAtual && !novoAtivo;
+
+    if(vaiMorrerAgora && jogadores.length > 0){
+
+      // REGRA DO DISTRIBUIDOR:
+      // Só mantém o mesmo distribuidor na PRÓXIMA RODADA
+      // quando o próximo jogador da sequência caiu antes de ser distribuidor.
+      let proximoDaFila = distribuidor;
+      let tentativas = 0;
+
+      do{
+
+        proximoDaFila = proximoDaFila + 1 >= jogadores.length
+          ? 0
+          : proximoDaFila + 1;
+
+        tentativas++;
+
+      }while(
+        jogadores[proximoDaFila]?.ativo === false &&
+        tentativas <= jogadores.length
+      );
+
+      if(indexJogador === proximoDaFila){
+        setManterDistribuidorProximaRodada(true);
+      }
+
+      setTeveEliminadoNaRodada(true);
+
+    }
+
     setJogadores(prev =>
-      prev.map(j => {
-
-        if(j.id !== id) return j;
-
-        const ativoAtual = j.ativo !== false;
-        const novoAtivo = !ativoAtual;
-
-        // REGRA: zerar as vidas NÃO apaga o jogador sozinho.
-        // O jogador só morre/apaga quando o número dele for apertado.
-        if(j.vidas <= 0 && ativoAtual && !novoAtivo){
-          setTeveEliminadoNaRodada(true);
-        }
-
-        return {
-          ...j,
-          ativo: novoAtivo
-        };
-
-      })
+      prev.map(j =>
+        j.id === id
+        ? {
+            ...j,
+            ativo: novoAtivo
+          }
+        : j
+      )
     );
 
   }
@@ -898,10 +958,21 @@ const contasAcumuladas = useMemo(() => {
         0
       );
 
+    const ganhouDe = contas
+      .filter(conta => conta.recebedor === vencedor.nome)
+      .map(conta => ({
+        nome:conta.devedor,
+        valor:conta.valor
+      }));
+
+    const livres = obterLivresAtivos();
+
     setHistoricoCampeoes(prev => [
       {
         nome:vencedor.nome,
         premio: premioFinal,
+        ganhouDe,
+        livres,
         contas,
         data:new Date().toLocaleString("pt-BR")
       },
@@ -964,14 +1035,14 @@ const contasAcumuladas = useMemo(() => {
       }));
 
     const distribuidorAtual = jogadores[distribuidor];
-    const distribuidorAtualEliminado =
-      distribuidorAtual && distribuidorAtual.ativo === false;
+    const livresRodada = obterLivresAtivos();
 
     setHistoricoJogadas(prev => [
       {
         rodada,
         data:new Date().toLocaleString("pt-BR"),
         distribuidor:distribuidorAtual?.nome || "-",
+        livres:livresRodada,
         jogadores:resumo
       },
       ...prev
@@ -1053,28 +1124,15 @@ const contasAcumuladas = useMemo(() => {
 
       if(jogadores.length === 0) return 0;
 
-      // Se o distribuidor morreu ao apertar o número dele, volta
-      // para o distribuidor anterior ativo.
-      if(distribuidorAtualEliminado){
-
-        let anterior = prev - 1;
-        if(anterior < 0) anterior = jogadores.length - 1;
-
-        let tentativas = 0;
-
-        while(
-          jogadores[anterior]?.ativo === false &&
-          tentativas <= jogadores.length
-        ){
-          anterior--;
-          if(anterior < 0) anterior = jogadores.length - 1;
-          tentativas++;
-        }
-
-        return anterior;
-
+      // REGRA: só mantém o mesmo distribuidor na próxima rodada
+      // quando o próximo jogador da sequência caiu antes de ser distribuidor.
+      if(manterDistribuidorProximaRodada){
+        setManterDistribuidorProximaRodada(false);
+        return prev;
       }
 
+      // Caso contrário, o distribuidor continua para frente,
+      // pulando jogadores apagados/inativos conforme as regras do jogo.
       let proximo = prev;
       let tentativas = 0;
 
@@ -1120,6 +1178,24 @@ const contasAcumuladas = useMemo(() => {
       return;
 
     }
+
+    const livresNovoJogo = obterLivresAtivos();
+
+    setHistoricoJogadas(prev => [
+      {
+        rodada:"NOVO JOGO",
+        data:new Date().toLocaleString("pt-BR"),
+        distribuidor:jogadores[distribuidor]?.nome || "-",
+        campeao:campeaoAtual?.nome || "-",
+        livres:livresNovoJogo,
+        jogadores:jogadores.map(j => ({
+          nome:j.nome,
+          vidas:j.vidas,
+          vazas:j.vazas
+        }))
+      },
+      ...prev
+    ]);
 
     registrarCampeao(campeaoAtual);
 
@@ -2465,6 +2541,16 @@ const contasAcumuladas = useMemo(() => {
                     {item.distribuidor}
                   </p>
 
+                  {item.campeao && (
+                    <p className="text-yellow-400 mt-[2px] text-xs font-black">
+                      CAMPEÃO: {item.campeao}
+                    </p>
+                  )}
+
+                  <p className="text-blue-300 mt-[2px] text-xs font-black">
+                    LIVRE: {textoLivres(item.livres)}
+                  </p>
+
                   <div className="
                     mt-1
                     space-y-2
@@ -2669,6 +2755,16 @@ const contasAcumuladas = useMemo(() => {
                     mt-[2px]
                   ">
                     prêmio: {formatarDinheiro(item.premio)}
+                  </p>
+
+                  <p className="text-red-300 text-xs mt-[2px] font-black">
+                    GANHOU DE: {item.ganhouDe && item.ganhouDe.length > 0
+                      ? item.ganhouDe.map(g => `${g.nome} (${formatarDinheiro(g.valor)})`).join(" • ")
+                      : "-"}
+                  </p>
+
+                  <p className="text-blue-300 text-xs mt-[2px] font-black">
+                    LIVRE: {textoLivres(item.livres)}
                   </p>
 
                   <p className="
