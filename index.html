@@ -79,6 +79,7 @@ function App(){
   const [direcaoFolhas, setDirecaoFolhas] = useState("subindo");
   const [todosZeradosResetado, setTodosZeradosResetado] = useState(false);
   const [teveEliminadoNaRodada, setTeveEliminadoNaRodada] = useState(false);
+  const [resetarProximaRodada, setResetarProximaRodada] = useState(false);
   const [campeaoAnteriorNome, setCampeaoAnteriorNome] = useState("");
   const [listaBackups, setListaBackups] = useState([]);
   const [carregandoBackup, setCarregandoBackup] = useState(false);
@@ -127,6 +128,23 @@ function App(){
 
     if(jogadores.length === 1) return jogadores[0];
 
+    // REGRA NOVA:
+    // O campeão do NOVO JOGO é o último jogador que ficou ACESO,
+    // mesmo se estiver com 0 vidas.
+    const acesos = jogadores.filter(j => j.ativo !== false);
+
+    if(acesos.length === 1) return acesos[0];
+
+    // Exceção: se tiver 2 ou mais acesos, só permite quando
+    // 2 ou mais jogadores estiverem com LIVRE ativado.
+    // Nesse caso, o campeão padrão é o aceso que NÃO está LIVRE.
+    const livresAcesos = acesos.filter(j => j.tirarEntrada === true);
+    const acesosNaoLivres = acesos.filter(j => j.tirarEntrada !== true);
+
+    if(acesos.length >= 2 && livresAcesos.length >= 2 && acesosNaoLivres.length === 1){
+      return acesosNaoLivres[0];
+    }
+
     const vivos = jogadores.filter(j => j.vidas > 0);
 
     if(vivos.length === 1) return vivos[0];
@@ -150,6 +168,7 @@ function App(){
       entrada,
       vidasIniciais,
       campeaoAnteriorNome,
+      resetarProximaRodada,
       contasJogadores,
       contasAcumuladas,
       dataBackup:new Date().toLocaleString("pt-BR"),
@@ -259,6 +278,7 @@ function App(){
     setEntrada(dados.entrada ?? 5);
     setVidasIniciais(dados.vidasIniciais || 5);
     setCampeaoAnteriorNome(dados.campeaoAnteriorNome || "");
+      setResetarProximaRodada(dados.resetarProximaRodada || false);
     setTeveEliminadoNaRodada(false);
     setTodosZeradosResetado(false);
 
@@ -630,14 +650,25 @@ const contasAcumuladas = useMemo(() => {
   function alternarJogadorAtivo(id){
 
     setJogadores(prev =>
-      prev.map(j =>
-        j.id === id
-        ? {
-            ...j,
-            ativo: !(j.ativo !== false)
-          }
-        : j
-      )
+      prev.map(j => {
+
+        if(j.id !== id) return j;
+
+        const ativoAtual = j.ativo !== false;
+        const novoAtivo = !ativoAtual;
+
+        // REGRA: zerar as vidas NÃO apaga o jogador sozinho.
+        // O jogador só morre/apaga quando o número dele for apertado.
+        if(j.vidas <= 0 && ativoAtual && !novoAtivo){
+          setTeveEliminadoNaRodada(true);
+        }
+
+        return {
+          ...j,
+          ativo: novoAtivo
+        };
+
+      })
     );
 
   }
@@ -765,16 +796,11 @@ const contasAcumuladas = useMemo(() => {
 
         const novaVida = Math.max(0, j.vidas + valor);
 
-        // Marca eliminação, mas NÃO muda as folhas na hora.
-        // As folhas só voltam para 1 ao clicar em PRÓXIMA RODADA.
-        if(j.vidas > 0 && novaVida === 0){
-          setTeveEliminadoNaRodada(true);
-        }
-
+        // Vida zerada NÃO apaga a luz automaticamente.
+        // O jogador continua ativo até apertar o número dele.
         return {
           ...j,
-          vidas:novaVida,
-          ativo:novaVida > 0
+          vidas:novaVida
         };
 
       })
@@ -797,17 +823,17 @@ const contasAcumuladas = useMemo(() => {
 
   }
 
-  function registrarCampeao(){
+  function registrarCampeao(vencedorForcado = null){
 
     if(jogadores.length === 0) return;
 
-    let vencedor = null;
+    let vencedor = vencedorForcado;
 
-    if(jogadores.length === 1){
+    if(!vencedor && jogadores.length === 1){
 
       vencedor = jogadores[0];
 
-    }else{
+    }else if(!vencedor){
 
       const vivos = jogadores.filter(
         j => j.vidas > 0
@@ -939,7 +965,7 @@ const contasAcumuladas = useMemo(() => {
 
     const distribuidorAtual = jogadores[distribuidor];
     const distribuidorAtualEliminado =
-      distribuidorAtual && distribuidorAtual.vidas <= 0;
+      distribuidorAtual && distribuidorAtual.ativo === false;
 
     setHistoricoJogadas(prev => [
       {
@@ -962,22 +988,18 @@ const contasAcumuladas = useMemo(() => {
       }))
     );
 
-    // REGRA NOVA:
-    // Zerou vidas: apaga a luz na hora.
-    // Só ao clicar em PRÓXIMA RODADA volta para 1 folha.
-    // Excluir jogador manualmente não mexe nas folhas.
-    if(teveEliminadoNaRodada){
+    // REGRA FINAL:
+    // Vida zerada não apaga o jogador sozinho.
+    // O jogador só morre quando o número dele for apertado.
+    // Se alguém morreu na rodada, a PRÓXIMA RODADA volta para 1 folha.
+    // O botão R também força a PRÓXIMA RODADA voltar para 1 folha.
+    if(teveEliminadoNaRodada || resetarProximaRodada || (todosSemVida && !todosZeradosResetado)){
 
       setRodada(1);
       setDirecaoFolhas("subindo");
       setTeveEliminadoNaRodada(false);
+      setResetarProximaRodada(false);
       setTodosZeradosResetado(todosSemVida);
-
-    }else if(todosSemVida && !todosZeradosResetado){
-
-      setRodada(1);
-      setDirecaoFolhas("subindo");
-      setTodosZeradosResetado(true);
 
     }else{
 
@@ -1031,7 +1053,7 @@ const contasAcumuladas = useMemo(() => {
 
       if(jogadores.length === 0) return 0;
 
-      // Se o distribuidor perdeu todas as vidas, a próxima rodada volta
+      // Se o distribuidor morreu ao apertar o número dele, volta
       // para o distribuidor anterior ativo.
       if(distribuidorAtualEliminado){
 
@@ -1072,6 +1094,50 @@ const contasAcumuladas = useMemo(() => {
       return proximo;
 
     });
+
+  }
+
+
+  function finalizarNovoJogo(){
+
+    const acesos = jogadores.filter(j => j.ativo !== false);
+    const livresAcesos = acesos.filter(j => j.tirarEntrada === true);
+
+    // Se tiver 2 ou mais jogadores ACESOS, não deixa finalizar/começar novo jogo,
+    // exceto quando 2 ou mais desses jogadores estiverem com LIVRE ativado.
+    if(acesos.length >= 2 && livresAcesos.length < 2){
+
+      mostrarMensagemBackup("❌ DEIXE APENAS 1 JOGADOR ACESO PARA DEFINIR O CAMPEÃO");
+      return;
+
+    }
+
+    const campeaoAtual = obterVencedorAtual();
+
+    if(jogadores.length > 0 && !campeaoAtual){
+
+      mostrarMensagemBackup("❌ NÃO FOI POSSÍVEL DEFINIR O CAMPEÃO");
+      return;
+
+    }
+
+    registrarCampeao(campeaoAtual);
+
+    setCampeaoAnteriorNome(campeaoAtual?.nome || "");
+
+    setUltimoJogo(jogadores);
+
+    setJogadores([]);
+
+    setPremio(0);
+
+    setEntrada(5);
+
+    setRodada(1);
+
+    setDirecaoFolhas("subindo");
+
+    setDistribuidor(0);
 
   }
 
@@ -1132,7 +1198,7 @@ const contasAcumuladas = useMemo(() => {
           neon-blue
         ">
 
-          <div className="grid grid-cols-4 gap-1 text-center items-center">
+          <div className="grid grid-cols-5 gap-1 text-center items-center">
 
             <div>
 
@@ -1147,6 +1213,35 @@ const contasAcumuladas = useMemo(() => {
               ">
                 {formatarDinheiro(premioCalculado)}
               </h2>
+
+            </div>
+
+            <div>
+
+              <p className="text-zinc-400 text-xs">
+                RESET
+              </p>
+
+              <button
+                onClick={() => setResetarProximaRodada(true)}
+                className={`
+                  w-9
+                  h-8
+                  mx-auto
+                  rounded-md
+                  border
+                  text-lg
+                  font-black
+                  ${
+                    resetarProximaRodada
+                    ? "bg-red-600 text-white border-red-300"
+                    : "bg-zinc-800 text-red-400 border-red-600"
+                  }
+                `}
+                title="Na próxima rodada voltar para 1 folha"
+              >
+                R
+              </button>
 
             </div>
 
@@ -1657,7 +1752,7 @@ const contasAcumuladas = useMemo(() => {
                         : "bg-yellow-500 text-black border-yellow-300"
                       }
                     `}
-                    title="Ativar ou pular jogador nas próximas rodadas"
+                    title="Apertar para matar/apagar quando estiver zerado"
                   >
                     {index+1}
                   </button>
@@ -2117,28 +2212,7 @@ const contasAcumuladas = useMemo(() => {
                 abrirConfirmacao(
                   "Novo jogo?",
                   "Deseja finalizar este jogo, registrar campeão e limpar a mesa?",
-                  () => {
-                    const campeaoAtual = obterVencedorAtual();
-
-                    registrarCampeao();
-
-                    setCampeaoAnteriorNome(campeaoAtual?.nome || "");
-
-                    setUltimoJogo(jogadores);
-
-                    setJogadores([]);
-
-                    setPremio(0);
-
-                    setEntrada(5);
-
-                    setRodada(1);
-
-                    setDirecaoFolhas("subindo");
-
-                    setDistribuidor(0);
-
-                  }
+                  finalizarNovoJogo
                 )
               }
               className="
