@@ -14,9 +14,20 @@
 
 <style>
 
+html,
+body,
+#root{
+  margin:0;
+  padding:0;
+  background:#000;
+  min-height:100vh;
+  width:100%;
+  overflow-x:hidden;
+}
+
 body{
   background:#000;
-  overflow-x:hidden;
+  color:#fff;
 }
 
 .neon-yellow{
@@ -67,6 +78,11 @@ function App(){
   const [rodada, setRodada] = useState(1);
   const [direcaoFolhas, setDirecaoFolhas] = useState("subindo");
   const [todosZeradosResetado, setTodosZeradosResetado] = useState(false);
+  const [teveEliminadoNaRodada, setTeveEliminadoNaRodada] = useState(false);
+  const [campeaoAnteriorNome, setCampeaoAnteriorNome] = useState("");
+  const [listaBackups, setListaBackups] = useState([]);
+  const [carregandoBackup, setCarregandoBackup] = useState(false);
+  const [mensagemBackup, setMensagemBackup] = useState("");
   const [premio, setPremio] = useState(0);
   const [distribuidor, setDistribuidor] = useState(0);
 
@@ -82,61 +98,250 @@ function App(){
 
   function abrirConfirmacao(titulo, mensagem, acao){
 
+    const scrollAtual = window.scrollY || document.documentElement.scrollTop || 0;
+
     setConfirmacao({
       titulo,
       mensagem,
-      acao
+      acao,
+      scrollY: scrollAtual
     });
 
   }
 
-  useEffect(() => {
+  function mostrarMensagemBackup(texto){
 
-    const bloquearSaida = (e) => {
+    setMensagemBackup(texto);
 
-      const dadosBackup = {
-        jogadores,
-        premio,
-        rodada,
-        direcaoFolhas,
-        historicoJogadas,
-        historicoCampeoes,
-        ultimoJogo,
-        entrada,
-        vidasIniciais,
-        dataBackup:new Date().toLocaleString("pt-BR")
-      };
+    setTimeout(() => {
+      setMensagemBackup("");
+    }, 3500);
 
-      // Backup automático interno antes de atualizar ou fechar
-      localStorage.setItem(
-        "backupAutomaticoFodinhaPremium",
-        JSON.stringify(dadosBackup)
+  }
+
+  const FIREBASE_URL = "https://marcador-fodinha-premium-default-rtdb.firebaseio.com";
+
+  function obterVencedorAtual(){
+
+    if(jogadores.length === 0) return null;
+
+    if(jogadores.length === 1) return jogadores[0];
+
+    const vivos = jogadores.filter(j => j.vidas > 0);
+
+    if(vivos.length === 1) return vivos[0];
+
+    return null;
+
+  }
+
+  function montarDadosBackup(){
+
+    return {
+      jogadores,
+      premio,
+      premioCalculado,
+      rodada,
+      direcaoFolhas,
+      distribuidor,
+      historicoJogadas,
+      historicoCampeoes,
+      ultimoJogo,
+      entrada,
+      vidasIniciais,
+      campeaoAnteriorNome,
+      contasJogadores,
+      contasAcumuladas,
+      dataBackup:new Date().toLocaleString("pt-BR"),
+      timestamp:Date.now()
+    };
+
+  }
+
+  function enviarBackupAutomaticoSaida(){
+
+    try{
+
+      const dados = montarDadosBackup();
+      dados.tipoBackup = "AUTOMATICO_AO_SAIR";
+      const chave = String(dados.timestamp || Date.now());
+      const corpo = JSON.stringify(dados);
+
+      if(navigator.sendBeacon){
+
+        navigator.sendBeacon(
+          `${FIREBASE_URL}/backups/ultimo.json`,
+          new Blob([corpo], {type:"application/json"})
+        );
+
+      }
+
+      fetch(`${FIREBASE_URL}/backups/ultimo.json`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:corpo,
+        keepalive:true
+      }).catch(() => {});
+
+      fetch(`${FIREBASE_URL}/backups/lista/${chave}.json`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:corpo,
+        keepalive:true
+      }).catch(() => {});
+
+    }catch(e){}
+
+  }
+
+  async function salvarBackupFirebase(){
+
+    try{
+
+      setCarregandoBackup(true);
+
+      const dados = montarDadosBackup();
+      const chave = String(dados.timestamp);
+
+      await fetch(`${FIREBASE_URL}/backups/ultimo.json`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(dados)
+      });
+
+      await fetch(`${FIREBASE_URL}/backups/lista/${chave}.json`, {
+        method:"PUT",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(dados)
+      });
+
+      const resposta = await fetch(`${FIREBASE_URL}/backups/lista.json`);
+      const lista = await resposta.json();
+      const entradas = Object.entries(lista || {})
+        .sort((a,b) => Number(b[0]) - Number(a[0]));
+
+      const antigos = entradas.slice(50);
+
+      await Promise.all(
+        antigos.map(([id]) =>
+          fetch(`${FIREBASE_URL}/backups/lista/${id}.json`, {method:"DELETE"})
+        )
       );
 
-      // Bloqueia atualização/fechamento pedindo confirmação do navegador
-      e.preventDefault();
-      e.returnValue = "Deseja sair ou atualizar? O backup automático foi salvo.";
-      return e.returnValue;
+      setListaBackups([]);
 
-    };
+      mostrarMensagemBackup("✅ BACKUP REALIZADO COM SUCESSO");
 
-    window.addEventListener("beforeunload", bloquearSaida);
+    }catch(e){
 
-    return () => {
-      window.removeEventListener("beforeunload", bloquearSaida);
-    };
+      mostrarMensagemBackup("❌ ERRO AO REALIZAR BACKUP");
 
-  }, [
-    jogadores,
-    premio,
-    rodada,
-    direcaoFolhas,
-    historicoJogadas,
-    historicoCampeoes,
-    ultimoJogo,
-    entrada,
-    vidasIniciais
-  ]);
+    }finally{
+
+      setCarregandoBackup(false);
+
+    }
+
+  }
+
+  function aplicarBackup(dados){
+
+    if(!dados) return;
+
+    setJogadores(dados.jogadores || []);
+    setPremio(dados.premio || 0);
+    setRodada(dados.rodada || 1);
+    setDirecaoFolhas(dados.direcaoFolhas || "subindo");
+    setDistribuidor(Number(dados.distribuidor || 0));
+    setHistoricoJogadas(dados.historicoJogadas || []);
+    setHistoricoCampeoes(dados.historicoCampeoes || []);
+    setUltimoJogo(dados.ultimoJogo || []);
+    setEntrada(dados.entrada ?? 5);
+    setVidasIniciais(dados.vidasIniciais || 5);
+    setCampeaoAnteriorNome(dados.campeaoAnteriorNome || "");
+    setTeveEliminadoNaRodada(false);
+    setTodosZeradosResetado(false);
+
+  }
+
+  async function restaurarUltimoBackupFirebase(){
+
+    try{
+
+      setCarregandoBackup(true);
+
+      const resposta = await fetch(`${FIREBASE_URL}/backups/ultimo.json`);
+      const dados = await resposta.json();
+
+      if(!dados){
+        mostrarMensagemBackup("❌ NENHUM BACKUP ENCONTRADO");
+        return;
+      }
+
+      aplicarBackup(dados);
+
+      setListaBackups([]);
+
+      mostrarMensagemBackup("✅ BACKUP RESTAURADO COM SUCESSO");
+
+    }catch(e){
+
+      mostrarMensagemBackup("❌ ERRO AO RESTAURAR BACKUP");
+
+    }finally{
+
+      setCarregandoBackup(false);
+
+    }
+
+  }
+
+  async function verDatasBackupsFirebase(){
+
+    try{
+
+      setCarregandoBackup(true);
+
+      const resposta = await fetch(`${FIREBASE_URL}/backups/lista.json`);
+      const lista = await resposta.json();
+
+      const entradas = Object.entries(lista || {})
+        .sort((a,b) => Number(b[0]) - Number(a[0]))
+        .slice(0,50)
+        .map(([id, item]) => ({id, ...item}));
+
+      setListaBackups(entradas);
+
+      if(entradas.length === 0){
+        mostrarMensagemBackup("❌ NENHUM BACKUP ENCONTRADO");
+      }
+
+    }catch(e){
+
+      mostrarMensagemBackup("❌ ERRO AO CARREGAR BACKUPS");
+
+    }finally{
+
+      setCarregandoBackup(false);
+
+    }
+
+  }
+
+  function restaurarBackupSelecionado(item){
+
+    abrirConfirmacao(
+      "RESTAURAR ESTE BACKUP?",
+      `${item.dataBackup || "DATA DESCONHECIDA"}`,
+      () => {
+        aplicarBackup(item);
+        setListaBackups([]);
+        mostrarMensagemBackup("✅ BACKUP RESTAURADO COM SUCESSO");
+      }
+    );
+
+  }
+
 
   useEffect(() => {
 
@@ -147,9 +352,12 @@ function App(){
         e.preventDefault();
 
         abrirConfirmacao(
-          "Atualizar página?",
-          "A atualização foi bloqueada para proteger seus dados. Use backup antes se precisar sair.",
-          () => {}
+          "ATUALIZAR APLICATIVO?",
+          "ANTES DE ATUALIZAR, O APP FARÁ BACKUP AUTOMÁTICO. DEPOIS VAI ABRIR ZERADO ATÉ VOCÊ RESTAURAR UM BACKUP.",
+          () => {
+            enviarBackupAutomaticoSaida();
+            setTimeout(() => window.location.reload(), 300);
+          }
         );
 
       }
@@ -164,173 +372,53 @@ function App(){
 
   }, []);
 
+  useEffect(() => {
 
+    function salvarAoSair(){
+      enviarBackupAutomaticoSaida();
+    }
 
-  function fazerBackup(){
+    function confirmarSaida(e){
 
-    const dados = {
-      jogadores,
-      premio,
-      rodada,
-      direcaoFolhas,
-      historicoJogadas,
-      historicoCampeoes,
-      ultimoJogo,
-      entrada,
-      vidasIniciais,
-      dataBackup:new Date().toLocaleString("pt-BR")
-    };
+      enviarBackupAutomaticoSaida();
 
-    const arquivo = new Blob(
-      [JSON.stringify(dados, null, 2)],
-      {type:"application/json"}
-    );
-
-    const url = URL.createObjectURL(arquivo);
-    const a = document.createElement("a");
-
-    a.href = url;
-    a.download = "backup-fodinha-premium.json";
-    a.click();
-
-    URL.revokeObjectURL(url);
-
-  }
-
-  function backupAutomatico(){
-
-    const dados = {
-      jogadores,
-      premio,
-      rodada,
-      direcaoFolhas,
-      historicoJogadas,
-      historicoCampeoes,
-      ultimoJogo,
-      entrada,
-      vidasIniciais,
-      dataBackup:new Date().toLocaleString("pt-BR")
-    };
-
-    const jsonBackup = JSON.stringify(dados, null, 2);
-
-    // Salva automaticamente dentro do aplicativo
-    localStorage.setItem(
-      "backupAutomaticoFodinhaPremium",
-      jsonBackup
-    );
-
-    // Baixa automaticamente o arquivo do backup
-    const arquivo = new Blob(
-      [jsonBackup],
-      {type:"application/json"}
-    );
-
-    const url = URL.createObjectURL(arquivo);
-    const a = document.createElement("a");
-
-    a.href = url;
-    a.download = "backup-automatico-fodinha-premium.json";
-    a.click();
-
-    URL.revokeObjectURL(url);
-
-  }
-
-  function restaurarBackupAutomatico(){
-
-    const salvo = localStorage.getItem("backupAutomaticoFodinhaPremium");
-
-    if(!salvo){
-
-      setConfirmacao({
-        titulo:"Sem backup automático",
-        mensagem:"Ainda não existe backup automático salvo.",
-        acao:() => {}
-      });
-
-      return;
+      e.preventDefault();
+      e.returnValue = "AO SAIR OU ATUALIZAR, O BACKUP AUTOMÁTICO SERÁ SALVO. AO ABRIR NOVAMENTE, O APP VIRÁ ZERADO ATÉ RESTAURAR UM BACKUP.";
+      return e.returnValue;
 
     }
 
-    try{
-
-      const dados = JSON.parse(salvo);
-
-      setJogadores(dados.jogadores || []);
-      setPremio(dados.premio || 0);
-      setRodada(dados.rodada || 1);
-      setDirecaoFolhas(dados.direcaoFolhas || "subindo");
-      setHistoricoJogadas(dados.historicoJogadas || []);
-      setHistoricoCampeoes(dados.historicoCampeoes || []);
-      setUltimoJogo(dados.ultimoJogo || []);
-      setEntrada(dados.entrada || 0);
-      setVidasIniciais(dados.vidasIniciais || 5);
-
-      setConfirmacao({
-        titulo:"Backup restaurado!",
-        mensagem:"O backup automático foi restaurado com sucesso.",
-        acao:() => {}
-      });
-
-    }catch(e){
-
-      setConfirmacao({
-        titulo:"Erro ao restaurar",
-        mensagem:"Não foi possível restaurar o backup automático.",
-        acao:() => {}
-      });
-
-    }
-
-  }
-
-  function importarBackup(event){
-
-    const arquivo = event.target.files[0];
-
-    if(!arquivo) return;
-
-    const leitor = new FileReader();
-
-    leitor.onload = () => {
-
-      try{
-
-        const dados = JSON.parse(leitor.result);
-
-        setJogadores(dados.jogadores || []);
-        setPremio(dados.premio || 0);
-        setRodada(dados.rodada || 1);
-        setDirecaoFolhas(dados.direcaoFolhas || "subindo");
-        setHistoricoJogadas(dados.historicoJogadas || []);
-        setHistoricoCampeoes(dados.historicoCampeoes || []);
-        setUltimoJogo(dados.ultimoJogo || []);
-        setEntrada(dados.entrada || 0);
-        setVidasIniciais(dados.vidasIniciais || 5);
-
-        setConfirmacao({
-          titulo:"Backup importado!",
-          mensagem:"Os dados foram restaurados com sucesso.",
-          acao:() => {}
-        });
-
-      }catch(e){
-
-        setConfirmacao({
-          titulo:"Erro ao importar",
-          mensagem:"O arquivo selecionado não é um backup válido.",
-          acao:() => {}
-        });
-
+    function salvarQuandoOcultar(){
+      if(document.visibilityState === "hidden"){
+        enviarBackupAutomaticoSaida();
       }
+    }
 
+    window.addEventListener("beforeunload", confirmarSaida);
+    window.addEventListener("pagehide", salvarAoSair);
+    document.addEventListener("visibilitychange", salvarQuandoOcultar);
+
+    return () => {
+      window.removeEventListener("beforeunload", confirmarSaida);
+      window.removeEventListener("pagehide", salvarAoSair);
+      document.removeEventListener("visibilitychange", salvarQuandoOcultar);
     };
 
-    leitor.readAsText(arquivo);
-    event.target.value = "";
+  }, [
+    jogadores,
+    premio,
+    rodada,
+    direcaoFolhas,
+    distribuidor,
+    historicoJogadas,
+    historicoCampeoes,
+    ultimoJogo,
+    entrada,
+    vidasIniciais,
+    campeaoAnteriorNome
+  ]);
 
-  }
+
 
   function formatarDinheiro(valor){
     return `R$ ${Number(valor || 0).toFixed(2).replace(".", ",")}`;
@@ -632,24 +720,31 @@ const contasAcumuladas = useMemo(() => {
 
   function excluirJogador(id){
 
-    const jogadorExcluido = jogadores.find(j => j.id === id);
-
-    if(!jogadorExcluido) return;
+    const indexExcluido = jogadores.findIndex(j => j.id === id);
 
     setJogadores(prev =>
       prev.filter(j => j.id !== id)
     );
 
-    // Se o jogador excluído estava sem vidas, volta para 1 folha.
-    // O LIVRE não desconta aqui, porque já descontou ao ativar.
-    if(jogadorExcluido.vidas <= 0){
+    // Excluir jogador manualmente NÃO volta as folhas para 1.
+    // Apenas ajusta o índice do distribuidor se necessário.
+    if(indexExcluido >= 0){
 
-      setRodada(1);
-      setDirecaoFolhas("subindo");
+      setDistribuidor(prev => {
 
-      if(typeof setTodosZeradosResetado === "function"){
-        setTodosZeradosResetado(false);
-      }
+        if(jogadores.length <= 1) return 0;
+
+        if(prev === indexExcluido){
+          return Math.max(0, prev - 1);
+        }
+
+        if(prev > indexExcluido){
+          return prev - 1;
+        }
+
+        return prev;
+
+      });
 
     }
 
@@ -664,15 +759,25 @@ const contasAcumuladas = useMemo(() => {
   function alterarVida(id, valor){
 
     setJogadores(prev =>
-      prev.map(j =>
-        j.id === id
-        ? {
-            ...j,
-            vidas: Math.max(0, j.vidas + valor),
-            ativo: Math.max(0, j.vidas + valor) <= 0 ? false : true
-          }
-        : j
-      )
+      prev.map(j => {
+
+        if(j.id !== id) return j;
+
+        const novaVida = Math.max(0, j.vidas + valor);
+
+        // Marca eliminação, mas NÃO muda as folhas na hora.
+        // As folhas só voltam para 1 ao clicar em PRÓXIMA RODADA.
+        if(j.vidas > 0 && novaVida === 0){
+          setTeveEliminadoNaRodada(true);
+        }
+
+        return {
+          ...j,
+          vidas:novaVida,
+          ativo:novaVida > 0
+        };
+
+      })
     );
 
   }
@@ -795,6 +900,12 @@ const contasAcumuladas = useMemo(() => {
 
     setJogadores(novosJogadores);
 
+    const indexCampeaoAnterior = novosJogadores.findIndex(j =>
+      j.nome === campeaoAnteriorNome
+    );
+
+    setDistribuidor(indexCampeaoAnterior >= 0 ? indexCampeaoAnterior : 0);
+
   }
 
   function excluirTodosJogos(){
@@ -826,11 +937,15 @@ const contasAcumuladas = useMemo(() => {
         vazas:j.vazas
       }));
 
+    const distribuidorAtual = jogadores[distribuidor];
+    const distribuidorAtualEliminado =
+      distribuidorAtual && distribuidorAtual.vidas <= 0;
+
     setHistoricoJogadas(prev => [
       {
         rodada,
         data:new Date().toLocaleString("pt-BR"),
-        distribuidor:jogadores[distribuidor]?.nome || "-",
+        distribuidor:distribuidorAtual?.nome || "-",
         jogadores:resumo
       },
       ...prev
@@ -847,11 +962,18 @@ const contasAcumuladas = useMemo(() => {
       }))
     );
 
-    // REGRA FINAL:
-    // Se todos ficarem com 0 vidas, NÃO sai campeão automático.
-    // A próxima rodada volta para 1 folha apenas uma vez.
-    // Depois continua subindo até o máximo e descendo normalmente.
-    if(todosSemVida && !todosZeradosResetado){
+    // REGRA NOVA:
+    // Zerou vidas: apaga a luz na hora.
+    // Só ao clicar em PRÓXIMA RODADA volta para 1 folha.
+    // Excluir jogador manualmente não mexe nas folhas.
+    if(teveEliminadoNaRodada){
+
+      setRodada(1);
+      setDirecaoFolhas("subindo");
+      setTeveEliminadoNaRodada(false);
+      setTodosZeradosResetado(todosSemVida);
+
+    }else if(todosSemVida && !todosZeradosResetado){
 
       setRodada(1);
       setDirecaoFolhas("subindo");
@@ -909,6 +1031,28 @@ const contasAcumuladas = useMemo(() => {
 
       if(jogadores.length === 0) return 0;
 
+      // Se o distribuidor perdeu todas as vidas, a próxima rodada volta
+      // para o distribuidor anterior ativo.
+      if(distribuidorAtualEliminado){
+
+        let anterior = prev - 1;
+        if(anterior < 0) anterior = jogadores.length - 1;
+
+        let tentativas = 0;
+
+        while(
+          jogadores[anterior]?.ativo === false &&
+          tentativas <= jogadores.length
+        ){
+          anterior--;
+          if(anterior < 0) anterior = jogadores.length - 1;
+          tentativas++;
+        }
+
+        return anterior;
+
+      }
+
       let proximo = prev;
       let tentativas = 0;
 
@@ -933,7 +1077,7 @@ const contasAcumuladas = useMemo(() => {
 
   return(
 
-    <div className="min-h-screen bg-black text-white overflow-x-hidden relative">
+    <div className="min-h-screen bg-black text-white overflow-x-hidden relative" style={{background:"#000", minHeight:"100vh"}}>
 
       
 
@@ -943,7 +1087,7 @@ const contasAcumuladas = useMemo(() => {
           transformOrigin: "top center",
           transition: "0.2s"
         }}
-        className="max-w-md mx-auto space-y-2 p-2"
+        className="max-w-md mx-auto space-y-2 px-2 pt-2 pb-0"
       >
 
         
@@ -1280,86 +1424,72 @@ const contasAcumuladas = useMemo(() => {
 
           </div>
 
-          <div className="
-            grid
-            grid-cols-2
-            gap-2
-            mt-3
-          ">
+          <div className="mt-4 border border-blue-500 rounded-lg p-3 bg-black">
 
-            <button
-              onClick={() =>
-                abrirConfirmacao(
-                  "Fazer backup?",
-                  "Deseja baixar um arquivo com todos os dados do jogo?",
-                  fazerBackup
-                )
-              }
-              className="
-                bg-green-700
-                border
-                border-green-500
-                text-white
-                py-3
-                rounded-lg
-                text-xs
-                font-black
-                shadow-[0_0_10px_#22c55e66]
-              "
-            >
-              💾 BACKUP
-            </button>
+            <p className="text-blue-300 text-center text-xs font-black mb-2">
+              BACKUPS FIREBASE
+            </p>
 
-            <label className="
-              bg-blue-700
-              border
-              border-blue-500
-              text-white
-              py-3
-              rounded-lg
-              text-xs
-              font-black
-              text-center
-              shadow-[0_0_10px_#3b82f666]
-              cursor-pointer
-            ">
-              📂 IMPORTAR
+            <div className="grid grid-cols-1 gap-2">
 
-              <input
-                type="file"
-                accept=".json,application/json"
-                onChange={importarBackup}
-                className="hidden"
-              />
+              <button
+                disabled={carregandoBackup}
+                onClick={salvarBackupFirebase}
+                className="bg-green-700 disabled:opacity-50 text-white py-3 rounded-lg text-xs font-black border border-green-400"
+              >
+                ✅ FAZER BACKUP AGORA
+              </button>
 
-            </label>
+              <button
+                disabled={carregandoBackup}
+                onClick={restaurarUltimoBackupFirebase}
+                className="bg-yellow-500 disabled:opacity-50 text-black py-3 rounded-lg text-xs font-black border border-yellow-300"
+              >
+                ✅ RESTAURAR ÚLTIMO BACKUP
+              </button>
+
+              <button
+                disabled={carregandoBackup}
+                onClick={verDatasBackupsFirebase}
+                className="bg-blue-700 disabled:opacity-50 text-white py-3 rounded-lg text-xs font-black border border-blue-400"
+              >
+                ✅ ÚLTIMOS BACKUPS
+              </button>
+
+            </div>
+
+            {mensagemBackup && (
+              <div className="mt-3 bg-zinc-900 border border-yellow-500 rounded-lg p-2 text-center text-xs font-black text-yellow-300">
+                {mensagemBackup}
+              </div>
+            )}
+
+{listaBackups.length > 0 && (
+
+              <div className="mt-3 max-h-72 overflow-y-auto space-y-2">
+
+                {listaBackups.map((item, index) => (
+
+                  <button
+                    key={item.id || index}
+                    onClick={() => restaurarBackupSelecionado(item)}
+                    className="w-full text-left bg-zinc-900 border border-zinc-700 rounded-lg p-2 text-xs"
+                  >
+                    <div className="font-black text-yellow-300">
+                      {index + 1}. {item.dataBackup || "Backup sem data"}
+                    </div>
+                    <div className="text-zinc-400">
+                      Rodada {item.rodada || 1} • Jogadores {(item.jogadores || []).length} • Campeão padrão {item.campeaoAnteriorNome || "-"}
+                    </div>
+                  </button>
+
+                ))}
+
+              </div>
+
+            )}
 
           </div>
-
-          <button
-            onClick={() =>
-              abrirConfirmacao(
-                "Restaurar backup automático?",
-                "Deseja restaurar o último backup automático salvo ao fechar/atualizar ou no NOVO JOGO?",
-                restaurarBackupAutomatico
-              )
-            }
-            className="
-              w-full
-              bg-purple-700
-              border
-              border-purple-500
-              text-white
-              py-3
-              rounded-lg
-              text-xs
-              font-black
-              mt-2
-              shadow-[0_0_10px_#a855f766]
-            "
-          >
-            🔄 RESTAURAR BACKUP AUTOMÁTICO
-          </button>
 
         </div>
 
@@ -1988,10 +2118,11 @@ const contasAcumuladas = useMemo(() => {
                   "Novo jogo?",
                   "Deseja finalizar este jogo, registrar campeão e limpar a mesa?",
                   () => {
-
-                    backupAutomatico();
+                    const campeaoAtual = obterVencedorAtual();
 
                     registrarCampeao();
+
+                    setCampeaoAnteriorNome(campeaoAtual?.nome || "");
 
                     setUltimoJogo(jogadores);
 
@@ -2004,6 +2135,8 @@ const contasAcumuladas = useMemo(() => {
                     setRodada(1);
 
                     setDirecaoFolhas("subindo");
+
+                    setDistribuidor(0);
 
                   }
                 )
@@ -2056,21 +2189,15 @@ const contasAcumuladas = useMemo(() => {
 
           <div
             style={{
-              transform:"none"
+              position:"absolute",
+              top:`${((confirmacao.scrollY || 0) / Math.max(zoomTela || 1, 0.1)) + 80}px`,
+              left:"50%",
+              transform:"translateX(-50%)",
+              zIndex:99999,
+              width:"92vw",
+              maxWidth:"330px"
             }}
-            className="
-            fixed
-            top-0
-            left-0
-            w-screen
-            h-screen
-            bg-black/85
-            z-[99999]
-            flex
-            items-center
-            justify-center
-            p-4
-          ">
+          >
 
             <div className="
               bg-zinc-950
@@ -2078,12 +2205,10 @@ const contasAcumuladas = useMemo(() => {
               border-yellow-500
               rounded-xl
               p-5
-              max-w-[330px]
-              w-[92vw]
+              w-full
               text-center
               shadow-[0_0_30px_#facc15cc]
               relative
-              animate-pulse
             ">
 
               <h2 className="
@@ -2110,42 +2235,42 @@ const contasAcumuladas = useMemo(() => {
               ">
 
                 <button
-                  onClick={() =>
-                    setConfirmacao(null)
-                  }
+                  onClick={() => {
+                    if(confirmacao.acao){ confirmacao.acao(); }
+                    setConfirmacao(null);
+                  }}
                   className="
-                    bg-zinc-900
+                    bg-red-600
                     border
-                    border-red-500
+                    border-red-400
                     text-white
                     py-3
                     rounded-lg
                     text-sm
                     font-black
-                    shadow-[0_0_10px_#ef444466]
+                    shadow-[0_0_12px_#ef4444aa]
                   "
                 >
-                  NÃO
+                  SIM
                 </button>
 
                 <button
-                  onClick={() => {
-                    if(confirmacao.acao){ if(confirmacao.acao){ if(confirmacao.acao){ confirmacao.acao(); } } }
-                    setConfirmacao(null);
-                  }}
+                  onClick={() =>
+                    setConfirmacao(null)
+                  }
                   className="
                     bg-green-600
                     border
                     border-green-400
-                    text-black
+                    text-white
                     py-3
                     rounded-lg
                     text-sm
                     font-black
-                    shadow-[0_0_14px_#22c55eaa]
+                    shadow-[0_0_12px_#22c55eaa]
                   "
                 >
-                  SIM
+                  NÃO
                 </button>
 
               </div>
