@@ -61,6 +61,7 @@ input:focus{
 
 <body>
 
+<!-- VERSAO_LIMPA_REGRAS_R_VER_AJUSTADAS_R_APAGADO_MULTI_CAMPEOES_2026-06-11 -->
 <div id="root"></div>
 
 <script type="text/babel">
@@ -77,9 +78,9 @@ function App(){
 
   const [rodada, setRodada] = useState(1);
   const [direcaoFolhas, setDirecaoFolhas] = useState("subindo");
-  const [todosZeradosResetado, setTodosZeradosResetado] = useState(false);
-  const [teveEliminadoNaRodada, setTeveEliminadoNaRodada] = useState(false);
-  const [resetarProximaRodada, setResetarProximaRodada] = useState(false);
+  const [rAtivo, setRAtivo] = useState(false);
+  const [rAutoAssinaturaUsada, setRAutoAssinaturaUsada] = useState("");
+  const [primeiraRodadaNovoJogo, setPrimeiraRodadaNovoJogo] = useState(false);
   const [manterDistribuidorProximaRodada, setManterDistribuidorProximaRodada] = useState(false);
   const [campeaoAnteriorNome, setCampeaoAnteriorNome] = useState("");
   const [listaBackups, setListaBackups] = useState([]);
@@ -154,6 +155,27 @@ function App(){
 
   }
 
+
+  function obterCampeoesNovoJogo(){
+
+    const zeradosAcesos = jogadores.filter(j =>
+      j.ativo !== false && Number(j.vidas || 0) <= 0
+    );
+
+    // REGRA ADICIONADA:
+    // Se tiver 2 ou mais jogadores com 0 vidas e acesos,
+    // todos entram como campeões do NOVO JOGO.
+    if(zeradosAcesos.length >= 2){
+      return zeradosAcesos;
+    }
+
+    const vencedorUnico = obterVencedorAtual();
+
+    return vencedorUnico ? [vencedorUnico] : [];
+
+  }
+
+
   function montarDadosBackup(){
 
     return {
@@ -169,7 +191,10 @@ function App(){
       entrada,
       vidasIniciais,
       campeaoAnteriorNome,
-      resetarProximaRodada,
+      rAtivo,
+      rAutoAssinaturaUsada,
+      primeiraRodadaNovoJogo,
+      manterDistribuidorProximaRodada,
       contasJogadores,
       contasAcumuladas,
       dataBackup:new Date().toLocaleString("pt-BR"),
@@ -279,10 +304,10 @@ function App(){
     setEntrada(dados.entrada ?? 5);
     setVidasIniciais(dados.vidasIniciais || 5);
     setCampeaoAnteriorNome(dados.campeaoAnteriorNome || "");
-      setResetarProximaRodada(dados.resetarProximaRodada || false);
-      setManterDistribuidorProximaRodada(dados.manterDistribuidorProximaRodada || false);
-    setTeveEliminadoNaRodada(false);
-    setTodosZeradosResetado(false);
+    setRAtivo(dados.rAtivo || false);
+    setRAutoAssinaturaUsada(dados.rAutoAssinaturaUsada || "");
+    setPrimeiraRodadaNovoJogo(dados.primeiraRodadaNovoJogo || false);
+    setManterDistribuidorProximaRodada(dados.manterDistribuidorProximaRodada || false);
 
   }
 
@@ -449,12 +474,16 @@ function App(){
   function obterLivresAtivos(lista = jogadores){
 
     return lista
-      .filter(j => j.tirarEntrada === true || (j.recebeLivreDe || []).length > 0)
+      .filter(j => j.tirarEntrada === true || obterSelecionadosVer(j).length > 0)
       .map(j => ({
         nome:j.nome,
         livreProprio:j.tirarEntrada === true,
-        recebeLivreDe:(j.recebeLivreDe || [])
-          .map(id => lista.find(outro => outro.id === id)?.nome)
+        recebeLivreDe:obterSelecionadosVer(j)
+          .map(item => {
+            const nome = lista.find(outro => outro.id === item.id)?.nome;
+            if(!nome) return null;
+            return `${nome} ${item.percentual === 0.5 ? "50%" : "100%"}`;
+          })
           .filter(Boolean)
       }));
 
@@ -476,6 +505,76 @@ function App(){
     }).join(" • ");
 
   }
+
+  function obterPercentualVer(responsavel, jogadorId){
+
+    const mapa = responsavel.recebeLivreDePercentuais || {};
+    if(mapa[jogadorId] !== undefined) return Number(mapa[jogadorId]);
+    if((responsavel.recebeLivreDe || []).includes(jogadorId)) return 1;
+    return 0;
+
+  }
+
+  function obterSelecionadosVer(responsavel){
+
+    const ids = new Set([
+      ...(responsavel.recebeLivreDe || []),
+      ...Object.keys(responsavel.recebeLivreDePercentuais || {}).map(id => Number(id))
+    ]);
+
+    return Array.from(ids)
+      .map(id => ({id, percentual: obterPercentualVer(responsavel, id)}))
+      .filter(item => item.percentual > 0);
+
+  }
+
+  function totalPercentualVerDoJogador(jogadorId, ignorarResponsavelId = null, lista = jogadores){
+
+    return lista.reduce((total, responsavel) => {
+
+      if(ignorarResponsavelId !== null && responsavel.id === ignorarResponsavelId){
+        return total;
+      }
+
+      return total + obterPercentualVer(responsavel, jogadorId);
+
+    }, 0);
+
+  }
+
+  function percentualDisponivelVer(jogadorId, responsavelId = null){
+
+    return Math.max(0, 1 - totalPercentualVerDoJogador(jogadorId, responsavelId));
+
+  }
+
+  function assinaturaZeradosAcesos(lista = jogadores){
+
+    return lista
+      .filter(j => j.ativo !== false && Number(j.vidas || 0) <= 0)
+      .map(j => j.id)
+      .sort()
+      .join("|");
+
+  }
+
+  useEffect(() => {
+
+    // REGRA NOVA DO R AUTOMÁTICO:
+    // Só liga sozinho quando existirem 2 ou mais jogadores SEM VIDA e ACESOS.
+    // Depois que esse mesmo grupo já usou o R, não liga de novo até mudar o grupo.
+    const assinaturaAtual = assinaturaZeradosAcesos(jogadores);
+    const quantidade = assinaturaAtual ? assinaturaAtual.split("|").length : 0;
+
+    if(quantidade >= 2 && assinaturaAtual !== rAutoAssinaturaUsada){
+      setRAtivo(true);
+    }
+
+    if(quantidade < 2 && rAutoAssinaturaUsada){
+      setRAutoAssinaturaUsada("");
+    }
+
+  }, [jogadores, rAutoAssinaturaUsada]);
 
   const maxCartas = useMemo(() => {
 
@@ -520,41 +619,50 @@ function App(){
     if(!vencedor) return [];
 
     const contas = [];
-    const selecionados = new Set();
+    const percentualUsadoPorJogador = {};
 
-    // Primeiro: quem foi selecionado dentro do VER paga para quem selecionou
+    // Primeiro: quem foi selecionado no VER paga o percentual escolhido
+    // para quem selecionou. Dois jogadores podem selecionar 50% cada
+    // do mesmo jogador, até completar 100%.
     jogadores.forEach(responsavel => {
 
-      (responsavel.recebeLivreDe || []).forEach(idSelecionado => {
+      obterSelecionadosVer(responsavel).forEach(itemVer => {
 
-        const selecionado = jogadores.find(j => j.id === idSelecionado);
+        const selecionado = jogadores.find(j => j.id === itemVer.id);
 
         if(!selecionado) return;
         if(selecionado.tirarEntrada === true) return;
 
-        selecionados.add(selecionado.id);
+        const percentualAtual = Number(itemVer.percentual || 0);
+        percentualUsadoPorJogador[selecionado.id] =
+          (percentualUsadoPorJogador[selecionado.id] || 0) + percentualAtual;
 
         contas.push({
           devedor:selecionado.nome,
           recebedor:responsavel.nome,
-          valor:entrada
+          valor:Number(entrada || 0) * percentualAtual
         });
 
       });
 
     });
 
-    // Depois: quem não foi selecionado e não está LIVRE paga para o campeão
+    // Depois: o percentual que sobrar de cada jogador vai para o campeão.
+    // Exemplo: se só 50% foi selecionado no VER, os outros 50% vão para o campeão.
     jogadores.forEach(j => {
 
       if(j.id === vencedor.id) return;
       if(j.tirarEntrada === true) return;
-      if(selecionados.has(j.id)) return;
+
+      const usado = Math.min(1, Number(percentualUsadoPorJogador[j.id] || 0));
+      const restante = Math.max(0, 1 - usado);
+
+      if(restante <= 0) return;
 
       contas.push({
         devedor:j.nome,
         recebedor:vencedor.nome,
-        valor:entrada
+        valor:Number(entrada || 0) * restante
       });
 
     });
@@ -568,7 +676,10 @@ function App(){
     const mapa = {};
 
     historicoCampeoes.forEach(j => {
-      mapa[j.nome] = (mapa[j.nome] || 0) + 1;
+      const nomes = Array.isArray(j.campeoes) && j.campeoes.length > 0 ? j.campeoes : [j.nome];
+      nomes.forEach(nome => {
+        mapa[nome] = (mapa[nome] || 0) + 1;
+      });
     });
 
     return mapa;
@@ -716,7 +827,11 @@ const contasAcumuladas = useMemo(() => {
         setManterDistribuidorProximaRodada(true);
       }
 
-      setTeveEliminadoNaRodada(true);
+      // REGRA NOVA: quando 1 ou mais jogador SEM VIDA for apagado,
+      // o R ativa e a próxima rodada volta para 1 folha.
+      setRAtivo(true);
+      setPrimeiraRodadaNovoJogo(false);
+
 
     }
 
@@ -743,10 +858,9 @@ const contasAcumuladas = useMemo(() => {
 
   function jogadorJaSelecionadoEmOutro(jogadorId, donoId){
 
-    return jogadores.some(j =>
-      j.id !== donoId &&
-      (j.recebeLivreDe || []).includes(jogadorId)
-    );
+    // Agora só bloqueia se o jogador já tiver 100% selecionado por outros.
+    // Se tiver apenas 50%, outro jogador ainda pode selecionar os outros 50%.
+    return totalPercentualVerDoJogador(jogadorId, donoId) >= 1;
 
   }
 
@@ -770,9 +884,13 @@ const contasAcumuladas = useMemo(() => {
         // Se ativou LIVRE próprio, remove esse jogador das listas dos outros
         if(vaiAtivar){
 
+          const novoMapa = {...(j.recebeLivreDePercentuais || {})};
+          delete novoMapa[id];
+
           return {
             ...j,
-            recebeLivreDe:(j.recebeLivreDe || []).filter(outroId => outroId !== id)
+            recebeLivreDe:(j.recebeLivreDe || []).filter(outroId => outroId !== id),
+            recebeLivreDePercentuais:novoMapa
           };
 
         }
@@ -784,28 +902,62 @@ const contasAcumuladas = useMemo(() => {
 
   }
 
-  function alternarLivreDe(jogadorId, pagadorId){
+  function alternarLivreDe(jogadorId, pagadorId, percentual){
 
-    setJogadores(prev =>
-      prev.map(j => {
+    setJogadores(prev => {
+
+      const responsavelAtual = prev.find(j => j.id === jogadorId);
+      const atual = responsavelAtual
+        ? obterPercentualVer(responsavelAtual, pagadorId)
+        : 0;
+
+      // Se clicar na mesma opção, remove a seleção.
+      if(atual === percentual){
+
+        return prev.map(j => {
+
+          if(j.id !== jogadorId) return j;
+
+          const novoMapa = {...(j.recebeLivreDePercentuais || {})};
+          delete novoMapa[pagadorId];
+
+          return {
+            ...j,
+            recebeLivreDe:Object.keys(novoMapa).map(id => Number(id)),
+            recebeLivreDePercentuais:novoMapa,
+            tirarEntrada:Object.keys(novoMapa).length > 0
+          };
+
+        });
+
+      }
+
+      const totalOutros = totalPercentualVerDoJogador(pagadorId, jogadorId, prev);
+
+      // Não deixa passar de 100% no total.
+      // Permite dois jogadores selecionarem 50% cada do mesmo jogador.
+      if(totalOutros + Number(percentual || 0) > 1){
+        mostrarMensagemBackup("❌ ESTE JOGADOR JÁ TEM 100% SELECIONADO NO VER");
+        return prev;
+      }
+
+      return prev.map(j => {
 
         if(j.id !== jogadorId) return j;
 
-        const listaAtual = j.recebeLivreDe || [];
-        const jaMarcado = listaAtual.includes(pagadorId);
-
-        const novaLista = jaMarcado
-          ? listaAtual.filter(id => id !== pagadorId)
-          : [...listaAtual, pagadorId];
+        const novoMapa = {...(j.recebeLivreDePercentuais || {})};
+        novoMapa[pagadorId] = percentual;
 
         return {
           ...j,
-          recebeLivreDe:novaLista,
-          tirarEntrada:novaLista.length > 0
+          recebeLivreDe:Object.keys(novoMapa).map(id => Number(id)),
+          recebeLivreDePercentuais:novoMapa,
+          tirarEntrada:Object.keys(novoMapa).length > 0
         };
 
-      })
-    );
+      });
+
+    });
 
   }
 
@@ -883,7 +1035,7 @@ const contasAcumuladas = useMemo(() => {
 
   }
 
-  function registrarCampeao(vencedorForcado = null){
+  function registrarCampeao(vencedorForcado = null, campeoesForcados = null){
 
     if(jogadores.length === 0) return;
 
@@ -907,42 +1059,58 @@ const contasAcumuladas = useMemo(() => {
 
     if(!vencedor) return;
 
-    const contas = [];
-    const selecionados = new Set();
+    const listaCampeoes = Array.isArray(campeoesForcados) && campeoesForcados.length > 0
+      ? campeoesForcados
+      : [vencedor];
 
-    // Primeiro: quem foi selecionado dentro do VER paga para quem selecionou
+    const nomesCampeoes = listaCampeoes.map(c => c.nome).filter(Boolean);
+    const idsCampeoes = new Set(listaCampeoes.map(c => c.id));
+
+    const contas = [];
+    const percentualUsadoPorJogador = {};
+
+    // Primeiro: quem foi selecionado no VER paga o percentual escolhido
+    // para quem selecionou. Dois jogadores podem selecionar 50% cada
+    // do mesmo jogador, até completar 100%.
     jogadores.forEach(responsavel => {
 
-      (responsavel.recebeLivreDe || []).forEach(idSelecionado => {
+      obterSelecionadosVer(responsavel).forEach(itemVer => {
 
-        const selecionado = jogadores.find(j => j.id === idSelecionado);
+        const selecionado = jogadores.find(j => j.id === itemVer.id);
 
         if(!selecionado) return;
         if(selecionado.tirarEntrada === true) return;
 
-        selecionados.add(selecionado.id);
+        const percentualAtual = Number(itemVer.percentual || 0);
+        percentualUsadoPorJogador[selecionado.id] =
+          (percentualUsadoPorJogador[selecionado.id] || 0) + percentualAtual;
 
         contas.push({
           devedor:selecionado.nome,
           recebedor:responsavel.nome,
-          valor:entrada
+          valor:Number(entrada || 0) * percentualAtual
         });
 
       });
 
     });
 
-    // Depois: quem não foi selecionado e não está LIVRE paga para o campeão
+    // Depois: o percentual que sobrar de cada jogador vai para o campeão.
+    // Exemplo: se só 50% foi selecionado no VER, os outros 50% vão para o campeão.
     jogadores.forEach(j => {
 
-      if(j.id === vencedor.id) return;
+      if(idsCampeoes.has(j.id)) return;
       if(j.tirarEntrada === true) return;
-      if(selecionados.has(j.id)) return;
+
+      const usado = Math.min(1, Number(percentualUsadoPorJogador[j.id] || 0));
+      const restante = Math.max(0, 1 - usado);
+
+      if(restante <= 0) return;
 
       contas.push({
         devedor:j.nome,
         recebedor:vencedor.nome,
-        valor:entrada
+        valor:Number(entrada || 0) * restante
       });
 
     });
@@ -969,7 +1137,8 @@ const contasAcumuladas = useMemo(() => {
 
     setHistoricoCampeoes(prev => [
       {
-        nome:vencedor.nome,
+        nome:nomesCampeoes.join(" • "),
+        campeoes:nomesCampeoes,
         premio: premioFinal,
         ganhouDe,
         livres,
@@ -992,6 +1161,7 @@ const contasAcumuladas = useMemo(() => {
       vazas:0,
       tirarEntrada:false,
       recebeLivreDe:[],
+      recebeLivreDePercentuais:{},
       ativo:true
     }));
 
@@ -1002,6 +1172,11 @@ const contasAcumuladas = useMemo(() => {
     );
 
     setDistribuidor(indexCampeaoAnterior >= 0 ? indexCampeaoAnterior : 0);
+    setRodada(1);
+    setDirecaoFolhas("subindo");
+    setPrimeiraRodadaNovoJogo(true);
+    setRAtivo(false);
+    setRAutoAssinaturaUsada("");
 
   }
 
@@ -1048,10 +1223,6 @@ const contasAcumuladas = useMemo(() => {
       ...prev
     ]);
 
-    const todosSemVida =
-      jogadores.length > 0 &&
-      jogadores.every(j => j.vidas <= 0);
-
     setJogadores(prev =>
       prev.map(j => ({
         ...j,
@@ -1059,18 +1230,23 @@ const contasAcumuladas = useMemo(() => {
       }))
     );
 
-    // REGRA FINAL:
-    // Vida zerada não apaga o jogador sozinho.
-    // O jogador só morre quando o número dele for apertado.
-    // Se alguém morreu na rodada, a PRÓXIMA RODADA volta para 1 folha.
-    // O botão R também força a PRÓXIMA RODADA voltar para 1 folha.
-    if(teveEliminadoNaRodada || resetarProximaRodada || (todosSemVida && !todosZeradosResetado)){
+    if(rAtivo){
+
+      const assinaturaAtualR = assinaturaZeradosAcesos(jogadores);
+      if(assinaturaAtualR){
+        setRAutoAssinaturaUsada(assinaturaAtualR);
+      }
 
       setRodada(1);
       setDirecaoFolhas("subindo");
-      setTeveEliminadoNaRodada(false);
-      setResetarProximaRodada(false);
-      setTodosZeradosResetado(todosSemVida);
+      setRAtivo(false);
+      setPrimeiraRodadaNovoJogo(false);
+
+    }else if(primeiraRodadaNovoJogo){
+
+      setRodada(maxCartas <= 1 ? 1 : 2);
+      setDirecaoFolhas("subindo");
+      setPrimeiraRodadaNovoJogo(false);
 
     }else{
 
@@ -1116,10 +1292,6 @@ const contasAcumuladas = useMemo(() => {
 
     }
 
-    if(!todosSemVida){
-      setTodosZeradosResetado(false);
-    }
-
     setDistribuidor(prev => {
 
       if(jogadores.length === 0) return 0;
@@ -1160,25 +1332,28 @@ const contasAcumuladas = useMemo(() => {
 
     const acesos = jogadores.filter(j => j.ativo !== false);
     const livresAcesos = acesos.filter(j => j.tirarEntrada === true);
+    const campeoesAtuais = obterCampeoesNovoJogo();
+    const temCampeoesMultiplosZerados = campeoesAtuais.length >= 2;
 
-    // Se tiver 2 ou mais jogadores ACESOS, não deixa finalizar/começar novo jogo,
-    // exceto quando 2 ou mais desses jogadores estiverem com LIVRE ativado.
-    if(acesos.length >= 2 && livresAcesos.length < 2){
+    // Mantém a regra antiga, mas libera quando houver 2 ou mais campeões
+    // com 0 vidas e acesos.
+    if(acesos.length >= 2 && livresAcesos.length < 2 && !temCampeoesMultiplosZerados){
 
       mostrarMensagemBackup("❌ DEIXE APENAS 1 JOGADOR ACESO PARA DEFINIR O CAMPEÃO");
       return;
 
     }
 
-    const campeaoAtual = obterVencedorAtual();
+    const campeaoAtual = campeoesAtuais[0] || null;
 
-    if(jogadores.length > 0 && !campeaoAtual){
+    if(jogadores.length > 0 && campeoesAtuais.length === 0){
 
       mostrarMensagemBackup("❌ NÃO FOI POSSÍVEL DEFINIR O CAMPEÃO");
       return;
 
     }
 
+    const nomesCampeoesNovoJogo = campeoesAtuais.map(c => c.nome).filter(Boolean);
     const livresNovoJogo = obterLivresAtivos();
 
     setHistoricoJogadas(prev => [
@@ -1186,7 +1361,8 @@ const contasAcumuladas = useMemo(() => {
         rodada:"NOVO JOGO",
         data:new Date().toLocaleString("pt-BR"),
         distribuidor:jogadores[distribuidor]?.nome || "-",
-        campeao:campeaoAtual?.nome || "-",
+        campeao:nomesCampeoesNovoJogo.join(" • ") || "-",
+        campeoes:nomesCampeoesNovoJogo,
         livres:livresNovoJogo,
         jogadores:jogadores.map(j => ({
           nome:j.nome,
@@ -1197,7 +1373,7 @@ const contasAcumuladas = useMemo(() => {
       ...prev
     ]);
 
-    registrarCampeao(campeaoAtual);
+    registrarCampeao(campeaoAtual, campeoesAtuais);
 
     setCampeaoAnteriorNome(campeaoAtual?.nome || "");
 
@@ -1212,6 +1388,12 @@ const contasAcumuladas = useMemo(() => {
     setRodada(1);
 
     setDirecaoFolhas("subindo");
+
+    setPrimeiraRodadaNovoJogo(true);
+
+    setRAtivo(false);
+
+    setRAutoAssinaturaUsada("");
 
     setDistribuidor(0);
 
@@ -1299,7 +1481,7 @@ const contasAcumuladas = useMemo(() => {
               </p>
 
               <button
-                onClick={() => setResetarProximaRodada(true)}
+                onClick={() => setRAtivo(prev => !prev)}
                 className={`
                   w-9
                   h-8
@@ -1309,12 +1491,12 @@ const contasAcumuladas = useMemo(() => {
                   text-lg
                   font-black
                   ${
-                    resetarProximaRodada
-                    ? "bg-red-600 text-white border-red-300"
+                    rAtivo
+                    ? "bg-red-600 text-white border-red-300 shadow-[0_0_14px_#ef4444]"
                     : "bg-zinc-800 text-red-400 border-red-600"
                   }
                 `}
-                title="Na próxima rodada voltar para 1 folha"
+                title="R manual: liga/desliga. Automático com 2+ acesos sem vida ou ao apagar jogador sem vida."
               >
                 R
               </button>
@@ -1952,20 +2134,32 @@ const contasAcumuladas = useMemo(() => {
                   border
                   border-green-500
                   rounded-lg
-                  p-2
+                  p-3
                   mt-2
-                  shadow-[0_0_12px_#22c55e66]
+                  shadow-[0_0_18px_#22c55e99]
                 ">
 
                   <h3 className="
+                    text-yellow-300
+                    text-2xl
+                    font-black
+                    text-center
+                    mb-1
+                    uppercase
+                    tracking-wide
+                  ">
+                    {jogador.nome}
+                  </h3>
+
+                  <p className="
                     text-green-400
                     text-xs
                     font-black
                     text-center
-                    mb-2
+                    mb-3
                   ">
-                    🟢 OPÇÕES DO JOGADOR
-                  </h3>
+                    OPÇÕES DO VER
+                  </p>
 
                   <button
                     onClick={() =>
@@ -1986,36 +2180,32 @@ const contasAcumuladas = useMemo(() => {
                       }
                     `}
                   >
-                    LIVRE
+                    LIVRE PRÓPRIO
                   </button>
 
                   <p className="
-                    text-zinc-400
-                    text-[10px]
+                    text-zinc-300
+                    text-[11px]
                     text-center
                     mb-2
+                    font-bold
                   ">
-                    Selecione abaixo os jogadores separados:
+                    Selecione quem paga para {jogador.nome}:
                   </p>
 
-                  <div className="
-                    grid
-                    grid-cols-2
-                    gap-2
-                  ">
+                  <div className="space-y-2">
 
                     {jogadores
                       .filter(outro =>
                         outro.id !== jogador.id &&
                         outro.tirarEntrada !== true &&
                         (
-                          (jogador.recebeLivreDe || []).includes(outro.id) ||
+                          obterPercentualVer(jogador, outro.id) > 0 ||
                           !jogadorJaSelecionadoEmOutro(outro.id, jogador.id)
                         )
                       ).length === 0 && (
 
                         <p className="
-                          col-span-2
                           text-zinc-500
                           text-[10px]
                           text-center
@@ -2030,33 +2220,93 @@ const contasAcumuladas = useMemo(() => {
                         outro.id !== jogador.id &&
                         outro.tirarEntrada !== true &&
                         (
-                          (jogador.recebeLivreDe || []).includes(outro.id) ||
+                          obterPercentualVer(jogador, outro.id) > 0 ||
                           !jogadorJaSelecionadoEmOutro(outro.id, jogador.id)
                         )
                       )
                       .map(outro => (
 
-                        <button
+                        <div
                           key={outro.id}
-                          onClick={() =>
-                            alternarLivreDe(jogador.id, outro.id)
-                          }
-                          className={`
-                            py-2
-                            px-2
-                            rounded-md
-                            text-[11px]
-                            font-black
+                          className="
+                            bg-zinc-950
                             border
-                            ${
-                              (jogador.recebeLivreDe || []).includes(outro.id)
-                              ? "bg-green-600 text-black border-green-300"
-                              : "bg-zinc-800 text-zinc-300 border-zinc-600"
-                            }
-                          `}
+                            border-zinc-700
+                            rounded-lg
+                            p-2
+                          "
                         >
-                          {outro.nome}
-                        </button>
+
+                          <div className="
+                            text-center
+                            text-blue-400
+                            text-lg
+                            font-black
+                            mb-2
+                            uppercase
+                            tracking-wide
+                            drop-shadow-[0_0_8px_#60a5fa]
+                          ">
+                            {outro.nome}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+
+                            <button
+                              disabled={
+                                obterPercentualVer(jogador, outro.id) !== 1 &&
+                                totalPercentualVerDoJogador(outro.id, jogador.id) > 0
+                              }
+                              onClick={() =>
+                                alternarLivreDe(jogador.id, outro.id, 1)
+                              }
+                              className={`
+                                py-2
+                                rounded-md
+                                text-xs
+                                font-black
+                                border-2
+                                ${
+                                  obterPercentualVer(jogador, outro.id) === 1
+                                  ? "bg-green-600 text-black border-green-300 shadow-[0_0_12px_#22c55e]"
+                                  : totalPercentualVerDoJogador(outro.id, jogador.id) > 0
+                                  ? "bg-zinc-950 text-zinc-600 border-zinc-700 opacity-50"
+                                  : "bg-zinc-900 text-green-300 border-green-500 shadow-[0_0_8px_#22c55e55]"
+                                }
+                              `}
+                            >
+                              100%
+                            </button>
+
+                            <button
+                              disabled={
+                                obterPercentualVer(jogador, outro.id) !== 0.5 &&
+                                totalPercentualVerDoJogador(outro.id, jogador.id) > 0.5
+                              }
+                              onClick={() =>
+                                alternarLivreDe(jogador.id, outro.id, 0.5)
+                              }
+                              className={`
+                                py-2
+                                rounded-md
+                                text-xs
+                                font-black
+                                border
+                                ${
+                                  obterPercentualVer(jogador, outro.id) === 0.5
+                                  ? "bg-yellow-400 text-black border-yellow-200 shadow-[0_0_12px_#facc15]"
+                                  : totalPercentualVerDoJogador(outro.id, jogador.id) > 0.5
+                                  ? "bg-zinc-950 text-zinc-600 border-zinc-700 opacity-50"
+                                  : "bg-zinc-800 text-yellow-300 border-yellow-600"
+                                }
+                              `}
+                            >
+                              50%
+                            </button>
+
+                          </div>
+
+                        </div>
 
                       ))}
 
@@ -2068,14 +2318,14 @@ const contasAcumuladas = useMemo(() => {
                     text-center
                     mt-2
                   ">
-                    LIVRE é do próprio jogador. Nomes abaixo pagam a entrada para este jogador, mesmo se ele não for campeão.
+                    100% paga a entrada inteira. Dois jogadores podem marcar 50% do mesmo jogador. Se sobrar 50%, vai para o campeão.
                   </p>
 
                 </div>
 
               )}
 
-              {/* VIDAS / VAZAS */}
+                            {/* VIDAS / VAZAS */}
 
               <div className="
                 grid
@@ -2747,7 +2997,7 @@ const contasAcumuladas = useMemo(() => {
                     text-sm
                     font-black
                   ">
-                    {item.nome}
+                    {Array.isArray(item.campeoes) && item.campeoes.length > 0 ? item.campeoes.join(" • ") : item.nome}
                   </h2>
 
                   <p className="
