@@ -1175,6 +1175,7 @@ const contasAcumuladas = useMemo(() => {
     setRodada(1);
     setDirecaoFolhas("subindo");
     setPrimeiraRodadaNovoJogo(true);
+    setManterDistribuidorProximaRodada(false);
     setRAtivo(false);
     setRAutoAssinaturaUsada("");
 
@@ -1298,9 +1299,13 @@ const contasAcumuladas = useMemo(() => {
 
       // REGRA: só mantém o mesmo distribuidor na próxima rodada
       // quando o próximo jogador da sequência caiu antes de ser distribuidor.
-      if(manterDistribuidorProximaRodada){
+      if(manterDistribuidorProximaRodada && !primeiraRodadaNovoJogo){
         setManterDistribuidorProximaRodada(false);
         return prev;
+      }
+
+      if(manterDistribuidorProximaRodada){
+        setManterDistribuidorProximaRodada(false);
       }
 
       // Caso contrário, o distribuidor continua para frente,
@@ -1390,6 +1395,8 @@ const contasAcumuladas = useMemo(() => {
     setDirecaoFolhas("subindo");
 
     setPrimeiraRodadaNovoJogo(true);
+
+    setManterDistribuidorProximaRodada(false);
 
     setRAtivo(false);
 
