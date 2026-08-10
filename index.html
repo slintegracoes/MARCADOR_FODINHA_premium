@@ -60,7 +60,7 @@ input:focus{
 
 <body>
 
-<!-- VERSAO_VOZ_NATURAL_CELULAR_2026-08-10 -->
+<!-- VERSAO_SOM_BOTAO_UNICO_2026-08-10 -->
 <div id="root"></div>
 
 <script>
@@ -201,7 +201,7 @@ function App() {
     }
     function falar(texto) {
         if (!vozAtiva || !texto) return;
-        falarVozNatural(texto, true);
+        falarVozNatural(texto, false);
     }
     function permitirSomCelular() {
         setPermissaoSom(true);
@@ -219,7 +219,7 @@ function App() {
         setVozAtiva(prev => {
             const novo = !prev;
             try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
-            if (novo) falarVozNatural("Voz ativada.", true);
+            if (novo) falarVozNatural("Voz ativada.", false);
             else {
                 try { const audio = window.__fodinhaAudioVoz; if (audio) { audio.pause(); audio.currentTime = 0; } } catch (e) { }
             }
@@ -1187,12 +1187,8 @@ function App() {
                             React.createElement("button", { onClick: () => setZoomTela(prev => Math.max(0.3, +(prev - 0.1).toFixed(1))), className: "\n                    bg-red-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "-"),
                             React.createElement("button", { onClick: () => setZoomTela(prev => Math.min(2.0, +(prev + 0.1).toFixed(1))), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+")))),
                 React.createElement("div", { className: "mt-4 border border-purple-500 rounded-lg p-3 bg-black" },
-                    React.createElement("p", { className: "text-purple-300 text-center text-xs font-black mb-2" }, "VOZ NATURAL DO APLICATIVO"),
-                    React.createElement("div", { className: "grid grid-cols-1 gap-2" },
-                        React.createElement("button", { onClick: permitirSomCelular, className: `w-full py-3 rounded-lg text-xs font-black border ${permissaoSom ? "bg-blue-700 text-white border-blue-300" : "bg-orange-600 text-white border-orange-300"}` }, permissaoSom ? "✅ SOM EMBUTIDO ATIVADO" : "🔊 ATIVAR SOM NO CELULAR"),
-                        React.createElement("div", { className: `text-center text-[11px] font-black rounded-md border px-2 py-2 ${permissaoSom ? "text-green-300 border-green-700 bg-green-950/40" : "text-orange-300 border-orange-700 bg-orange-950/40"}` }, statusSom),
-                        React.createElement("button", { onClick: alternarVoz, className: `w-full py-3 rounded-lg text-xs font-black border ${vozAtiva ? "bg-green-700 text-white border-green-400" : "bg-zinc-800 text-zinc-300 border-zinc-600"}` }, vozAtiva ? "🔊 VOZ ATIVADA" : "🔇 VOZ DESATIVADA"),
-                        React.createElement("button", { onClick: testarVozCelular, className: "w-full py-3 rounded-lg text-xs font-black border bg-purple-700 text-white border-purple-400" }, "📱 TESTAR VOZ NATURAL"))),
+                    React.createElement("p", { className: "text-purple-300 text-center text-xs font-black mb-2" }, "SOM DO APLICATIVO"),
+                    React.createElement("button", { onClick: alternarVoz, className: `w-full py-3 rounded-lg text-xs font-black border ${vozAtiva ? "bg-green-700 text-white border-green-400" : "bg-zinc-800 text-zinc-300 border-zinc-600"}` }, vozAtiva ? "🔊 SOM ATIVADO" : "🔇 SOM DESATIVADO")),
                 React.createElement("div", { className: "mt-4 border border-blue-500 rounded-lg p-3 bg-black" },
                     React.createElement("p", { className: "text-blue-300 text-center text-xs font-black mb-2" }, "BACKUPS FIREBASE"),
                     React.createElement("div", { className: "grid grid-cols-1 gap-2" },
