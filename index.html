@@ -118,6 +118,12 @@ function App() {
                 audio.volume = 1;
                 audio.setAttribute("playsinline", "");
                 audio.setAttribute("webkit-playsinline", "");
+                audio.style.position = "fixed";
+                audio.style.width = "1px";
+                audio.style.height = "1px";
+                audio.style.opacity = "0.01";
+                audio.style.pointerEvents = "none";
+                document.body.appendChild(audio);
                 audioVozRef.current = audio;
             }
             // WAV silencioso curtíssimo para liberar mídia no mesmo toque do usuário.
@@ -128,7 +134,6 @@ function App() {
             if (p && typeof p.then === "function") {
                 p.then(() => {
                     audioDesbloqueadoRef.current = true;
-                    try { a.pause(); a.currentTime = 0; } catch (e) { }
                 }).catch(() => {});
             } else {
                 audioDesbloqueadoRef.current = true;
@@ -177,8 +182,9 @@ function App() {
                 };
                 audio.onended = () => finalizar(true);
                 audio.onerror = () => finalizar(false, new Error("audio_error"));
+                audio.muted = false;
+                audio.volume = 1;
                 audio.src = url;
-                audio.load();
                 const p = audio.play();
                 if (p && typeof p.catch === "function") p.catch(err => finalizar(false, err));
                 setTimeout(() => {
@@ -220,7 +226,9 @@ function App() {
         try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
         if (novo) {
             desbloquearSomAplicativo();
-            setTimeout(() => tocarVozComFallback("Som ativado").catch(() => {}), 80);
+            // IMPORTANTE NO CELULAR/WEBVIEW: tocar no MESMO evento do clique.
+            // Qualquer setTimeout pode perder a permissão temporária de reprodução.
+            tocarVozComFallback("Som ativado").catch(() => {});
         } else {
             if (audioVozRef.current) {
                 try { audioVozRef.current.pause(); audioVozRef.current.currentTime = 0; } catch (e) { }
