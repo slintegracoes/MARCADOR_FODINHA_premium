@@ -98,44 +98,99 @@ function App() {
     });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
     const audioVozRef = React.useRef(null);
-    function tocarVozNeural(texto, forcar = false) {
-        if (!texto) return false;
-        if (!forcar && !vozAtiva) return false;
+    const filaVozRef = React.useRef(Promise.resolve());
+
+    function falarNativoAndroid(texto) {
         try {
-            const url = `https://api.streamelements.com/kappa/v2/speech?voice=Vitoria&text=${encodeURIComponent(String(texto))}`;
-            if (audioVozRef.current) {
-                try {
-                    audioVozRef.current.pause();
-                    audioVozRef.current.currentTime = 0;
-                } catch (e) { }
-            }
-            const audio = new Audio(url);
-            audio.preload = "auto";
-            audio.volume = 1;
-            audioVozRef.current = audio;
-            const promessa = audio.play();
-            if (promessa && typeof promessa.catch === "function") {
-                promessa.catch(() => { });
-            }
+            if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return false;
+            const utter = new SpeechSynthesisUtterance(String(texto));
+            utter.lang = "pt-BR";
+            utter.rate = 0.95;
+            utter.pitch = 1;
+            utter.volume = 1;
+            const vozes = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
+            const pt = vozes.find(v => /pt[-_]BR/i.test(v.lang)) || vozes.find(v => /^pt/i.test(v.lang));
+            if (pt) utter.voice = pt;
+            window.speechSynthesis.speak(utter);
             return true;
         } catch (e) {
             return false;
         }
     }
-    function falar(texto) {
-        tocarVozNeural(texto, false);
+
+    function tocarUrlVoz(url) {
+        return new Promise((resolve, reject) => {
+            try {
+                if (audioVozRef.current) {
+                    try {
+                        audioVozRef.current.pause();
+                        audioVozRef.current.removeAttribute("src");
+                        audioVozRef.current.load();
+                    } catch (e) { }
+                }
+                const audio = document.createElement("audio");
+                audio.preload = "auto";
+                audio.volume = 1;
+                audio.setAttribute("playsinline", "");
+                audioVozRef.current = audio;
+                let terminou = false;
+                const finalizar = (ok, err) => {
+                    if (terminou) return;
+                    terminou = true;
+                    audio.onended = null;
+                    audio.onerror = null;
+                    if (ok) resolve(true); else reject(err || new Error("audio_error"));
+                };
+                audio.onended = () => finalizar(true);
+                audio.onerror = () => finalizar(false, new Error("audio_error"));
+                audio.src = url;
+                const p = audio.play();
+                if (p && typeof p.catch === "function") p.catch(err => finalizar(false, err));
+                setTimeout(() => {
+                    if (!terminou && audio.readyState === 0) {
+                        try { audio.pause(); } catch (e) { }
+                        finalizar(false, new Error("timeout"));
+                    }
+                }, 4500);
+            } catch (e) {
+                reject(e);
+            }
+        });
     }
+
+    async function tocarVozComFallback(texto) {
+        const frase = String(texto || "").trim();
+        if (!frase) return false;
+        const q = encodeURIComponent(frase.slice(0, 180));
+        const urls = [
+            `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q=${q}`,
+            `https://api.streamelements.com/kappa/v2/speech?voice=Vitoria&text=${q}`
+        ];
+        for (const url of urls) {
+            try {
+                await tocarUrlVoz(url);
+                return true;
+            } catch (e) { }
+        }
+        return falarNativoAndroid(frase);
+    }
+
+    function falar(texto) {
+        if (!vozAtiva || !texto) return;
+        filaVozRef.current = filaVozRef.current.catch(() => {}).then(() => tocarVozComFallback(texto));
+    }
+
     function alternarVoz() {
         const novo = !vozAtiva;
         setVozAtiva(novo);
         try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
         if (novo) {
-            tocarVozNeural("Som ativado", true);
-        } else if (audioVozRef.current) {
-            try {
-                audioVozRef.current.pause();
-                audioVozRef.current.currentTime = 0;
-            } catch (e) { }
+            tocarVozComFallback("Som ativado");
+        } else {
+            if (audioVozRef.current) {
+                try { audioVozRef.current.pause(); audioVozRef.current.currentTime = 0; } catch (e) { }
+            }
+            try { if (window.speechSynthesis) window.speechSynthesis.cancel(); } catch (e) { }
         }
     }
         const [confirmacao, setConfirmacao] = useState(null);
