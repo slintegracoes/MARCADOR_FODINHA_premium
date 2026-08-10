@@ -97,76 +97,47 @@ function App() {
         }
     });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
-    function escolherVozAndroid() {
-        try {
-            if (!("speechSynthesis" in window)) return null;
-            const vozes = window.speechSynthesis.getVoices() || [];
-            return vozes.find(v => /^pt-BR$/i.test(v.lang) && /google|speech services|samsung|brasil|portugu/i.test(v.name))
-                || vozes.find(v => /^pt-BR$/i.test(v.lang))
-                || vozes.find(v => /^pt/i.test(v.lang))
-                || null;
-        } catch (e) {
-            return null;
-        }
-    }
-    function falarNativoAndroid(texto, forcar = false) {
+    const audioVozRef = React.useRef(null);
+    function tocarVozNeural(texto, forcar = false) {
         if (!texto) return false;
         if (!forcar && !vozAtiva) return false;
         try {
-            if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return false;
-            const synth = window.speechSynthesis;
-            const u = new SpeechSynthesisUtterance(String(texto));
-            u.lang = "pt-BR";
-            u.rate = 0.95;
-            u.pitch = 1.0;
-            u.volume = 1.0;
-            const voz = escolherVozAndroid();
-            if (voz) u.voice = voz;
-            // No Android/Chrome, evitar cancel() imediatamente antes do speak,
-            // pois isso pode cancelar a nova fala antes de iniciar.
-            try { synth.resume(); } catch (e) { }
-            synth.speak(u);
+            const url = `https://api.streamelements.com/kappa/v2/speech?voice=Vitoria&text=${encodeURIComponent(String(texto))}`;
+            if (audioVozRef.current) {
+                try {
+                    audioVozRef.current.pause();
+                    audioVozRef.current.currentTime = 0;
+                } catch (e) { }
+            }
+            const audio = new Audio(url);
+            audio.preload = "auto";
+            audio.volume = 1;
+            audioVozRef.current = audio;
+            const promessa = audio.play();
+            if (promessa && typeof promessa.catch === "function") {
+                promessa.catch(() => { });
+            }
             return true;
         } catch (e) {
             return false;
         }
     }
     function falar(texto) {
-        falarNativoAndroid(texto, false);
+        tocarVozNeural(texto, false);
     }
     function alternarVoz() {
         const novo = !vozAtiva;
         setVozAtiva(novo);
         try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
         if (novo) {
-            // Dispara diretamente no mesmo toque do botão.
-            falarNativoAndroid("Som ativado.", true);
-        } else {
+            tocarVozNeural("Som ativado", true);
+        } else if (audioVozRef.current) {
             try {
-                if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+                audioVozRef.current.pause();
+                audioVozRef.current.currentTime = 0;
             } catch (e) { }
         }
     }
-    useEffect(() => {
-        try {
-            if ("speechSynthesis" in window) {
-                // Força o Chrome/Android a carregar as vozes instaladas.
-                window.speechSynthesis.getVoices();
-                const atualizarVozes = () => {
-                    try { window.speechSynthesis.getVoices(); } catch (e) { }
-                };
-                window.speechSynthesis.addEventListener?.("voiceschanged", atualizarVozes);
-                window.__fodinhaAtualizarVozes = atualizarVozes;
-            }
-        } catch (e) { }
-        return () => {
-            try {
-                if ("speechSynthesis" in window && window.__fodinhaAtualizarVozes) {
-                    window.speechSynthesis.removeEventListener?.("voiceschanged", window.__fodinhaAtualizarVozes);
-                }
-            } catch (e) { }
-        };
-    }, []);
         const [confirmacao, setConfirmacao] = useState(null);
     function abrirConfirmacao(titulo, mensagem, acao) {
         const scrollAtual = window.scrollY || document.documentElement.scrollTop || 0;
