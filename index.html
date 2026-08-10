@@ -89,7 +89,45 @@ function App() {
     const [dragIndex, setDragIndex] = useState(null);
     const [zoomTela, setZoomTela] = useState(1);
     const [abrirConfig, setAbrirConfig] = useState(false);
+    const [vozAtiva, setVozAtiva] = useState(() => {
+        try {
+            return localStorage.getItem("fodinha_voz_ativa") !== "false";
+        } catch (e) {
+            return true;
+        }
+    });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
+    function falar(texto) {
+        if (!vozAtiva || !texto || !("speechSynthesis" in window))
+            return;
+        try {
+            window.speechSynthesis.cancel();
+            const fala = new SpeechSynthesisUtterance(String(texto));
+            fala.lang = "pt-BR";
+            fala.rate = 1;
+            fala.pitch = 1;
+            fala.volume = 1;
+            window.speechSynthesis.speak(fala);
+        } catch (e) { }
+    }
+    function alternarVoz() {
+        setVozAtiva(prev => {
+            const novo = !prev;
+            try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
+            if (novo && ("speechSynthesis" in window)) {
+                setTimeout(() => {
+                    try {
+                        const fala = new SpeechSynthesisUtterance("Voz ativada");
+                        fala.lang = "pt-BR";
+                        window.speechSynthesis.speak(fala);
+                    } catch (e) { }
+                }, 50);
+            } else if (!novo && ("speechSynthesis" in window)) {
+                window.speechSynthesis.cancel();
+            }
+            return novo;
+        });
+    }
     const [confirmacao, setConfirmacao] = useState(null);
     function abrirConfirmacao(titulo, mensagem, acao) {
         const scrollAtual = window.scrollY || document.documentElement.scrollTop || 0;
@@ -102,6 +140,7 @@ function App() {
     }
     function mostrarMensagemBackup(texto) {
         setMensagemBackup(texto);
+        falar(String(texto).replace(/[✅❌]/g, ""));
         setTimeout(() => {
             setMensagemBackup("");
         }, 3500);
@@ -569,6 +608,7 @@ function App() {
             }
         ]);
         setPremio(prev => prev + entrada);
+        falar(`Jogador ${novoJogador} adicionado com ${vidasIniciais} vidas`);
         setNovoJogador("");
     }
     function alternarJogadorAtivo(id) {
@@ -600,6 +640,7 @@ function App() {
             setRAtivo(true);
             setPrimeiraRodadaNovoJogo(false);
         }
+        falar(`${jogadorAtual.nome} ${novoAtivo ? "ativado" : "apagado"}`);
         setJogadores(prev => prev.map(j => j.id === id
             ? {
                 ...j,
@@ -618,6 +659,7 @@ function App() {
     function alternarLivreProprio(id) {
         const jogadorAtual = jogadores.find(j => j.id === id);
         const vaiAtivar = !(jogadorAtual?.tirarEntrada === true);
+        falar(`${jogadorAtual?.nome || "Jogador"}: livre ${vaiAtivar ? "ativado" : "desativado"}`);
         setJogadores(prev => prev.map(j => {
             if (j.id === id) {
                 return {
@@ -644,8 +686,10 @@ function App() {
             const atual = responsavelAtual
                 ? obterPercentualVer(responsavelAtual, pagadorId)
                 : 0;
+            const pagadorAtual = prev.find(j => j.id === pagadorId);
             // Se clicar na mesma opção, remove a seleção.
             if (atual === percentual) {
+                falar(`${responsavelAtual?.nome || "Jogador"} removeu ${percentual === 0.5 ? "50 por cento" : "100 por cento"} de ${pagadorAtual?.nome || "jogador"}`);
                 return prev.map(j => {
                     if (j.id !== jogadorId)
                         return j;
@@ -666,6 +710,7 @@ function App() {
                 mostrarMensagemBackup("❌ ESTE JOGADOR JÁ TEM 100% SELECIONADO NO VER");
                 return prev;
             }
+            falar(`${responsavelAtual?.nome || "Jogador"} marcou ${percentual === 0.5 ? "50 por cento" : "100 por cento"} de ${pagadorAtual?.nome || "jogador"}`);
             return prev.map(j => {
                 if (j.id !== jogadorId)
                     return j;
@@ -682,6 +727,8 @@ function App() {
     }
     function excluirJogador(id) {
         const indexExcluido = jogadores.findIndex(j => j.id === id);
+        const jogadorExcluido = jogadores[indexExcluido];
+        if (jogadorExcluido) falar(`Jogador ${jogadorExcluido.nome} excluído`);
         setJogadores(prev => prev.filter(j => j.id !== id));
         // Excluir jogador manualmente NÃO volta as folhas para 1.
         // Apenas ajusta o índice do distribuidor se necessário.
@@ -701,12 +748,14 @@ function App() {
     }
     function selecionarDistribuidor(index) {
         setDistribuidor(index);
+        if (jogadores[index]) falar(`${jogadores[index].nome} é o distribuidor`);
     }
     function alterarVida(id, valor) {
         setJogadores(prev => prev.map(j => {
             if (j.id !== id)
                 return j;
             const novaVida = Math.max(0, j.vidas + valor);
+            falar(`${j.nome}, ${novaVida} ${novaVida === 1 ? "vida" : "vidas"}`);
             // Vida zerada NÃO apaga a luz automaticamente.
             // O jogador continua ativo até apertar o número dele.
             return {
@@ -716,12 +765,12 @@ function App() {
         }));
     }
     function alterarVazas(id, valor) {
-        setJogadores(prev => prev.map(j => j.id === id
-            ? {
-                ...j,
-                vazas: j.vazas + valor
-            }
-            : j));
+        setJogadores(prev => prev.map(j => {
+            if (j.id !== id) return j;
+            const novasVazas = Math.max(0, j.vazas + valor);
+            falar(`${j.nome}, ${novasVazas} ${novasVazas === 1 ? "vaza" : "vazas"}`);
+            return { ...j, vazas: novasVazas };
+        }));
     }
     function registrarCampeao(vencedorForcado = null, campeoesForcados = null) {
         if (jogadores.length === 0)
@@ -831,6 +880,7 @@ function App() {
         setManterDistribuidorProximaRodada(false);
         setRAtivo(false);
         setRAutoAssinaturaUsada("");
+        falar("Jogadores recadastrados");
     }
     function excluirTodosJogos() {
         setHistoricoCampeoes([]);
@@ -843,6 +893,7 @@ function App() {
         setDirecaoFolhas("subindo");
     }
     function finalizarRodada() {
+        falar(`Rodada ${rodada} finalizada`);
         const resumo = jogadores
             .filter(j => j.ativo !== false)
             .map(j => ({
@@ -947,6 +998,7 @@ function App() {
             return;
         }
         const nomesCampeoesNovoJogo = campeoesAtuais.map(c => c.nome).filter(Boolean);
+        falar(nomesCampeoesNovoJogo.length > 1 ? `Campeões: ${nomesCampeoesNovoJogo.join(" e ")}` : `Campeão: ${nomesCampeoesNovoJogo[0] || "não definido"}`);
         const livresNovoJogo = obterLivresAtivos();
         setHistoricoJogadas(prev => [
             {
@@ -993,7 +1045,7 @@ function App() {
                         React.createElement("h2", { className: "\n                text-sm\n                font-black\n                text-green-400\n              " }, formatarDinheiro(premioCalculado))),
                     React.createElement("div", null,
                         React.createElement("p", { className: "text-zinc-400 text-xs" }, "RESET"),
-                        React.createElement("button", { onClick: () => setRAtivo(prev => !prev), className: `
+                        React.createElement("button", { onClick: () => setRAtivo(prev => { const n = !prev; falar(`Reset ${n ? "ativado" : "desativado"}`); return n; }), className: `
                   w-9
                   h-8
                   mx-auto
@@ -1019,20 +1071,23 @@ function App() {
                     React.createElement("div", null,
                         React.createElement("p", { className: "text-zinc-400 text-xs mb-[2px] text-center" }, "VIDAS"),
                         React.createElement("div", { className: "\n                bg-black\n                border\n                border-red-500\n                rounded-sm\n                h-[46px]\n                grid\n                grid-cols-[24px_1fr_24px]\n                items-center\n                px-[2px]\n                gap-[2px]\n              " },
-                            React.createElement("button", { onClick: () => setVidasIniciais(prev => Math.max(0, prev - 1)), className: "\n                    bg-red-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "-"),
+                            React.createElement("button", { onClick: () => setVidasIniciais(prev => { const n = Math.max(0, prev - 1); falar(`Vidas iniciais ${n}`); return n; }), className: "\n                    bg-red-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "-"),
                             React.createElement("input", { type: "number", value: vidasIniciais, onChange: (e) => setVidasIniciais(Number(e.target.value)), className: "\n                    w-full\n                    bg-transparent\n                    text-center\n                    text-xl\n                    font-black\n                    text-red-400\n                  " }),
-                            React.createElement("button", { onClick: () => setVidasIniciais(prev => prev + 1), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+"))),
+                            React.createElement("button", { onClick: () => setVidasIniciais(prev => { const n = prev + 1; falar(`Vidas iniciais ${n}`); return n; }), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+"))),
                     React.createElement("div", null,
                         React.createElement("p", { className: "text-zinc-400 text-xs mb-[2px] text-center" }, "ENTRADA"),
                         React.createElement("div", { className: "\n                bg-black\n                border\n                border-yellow-500\n                rounded-sm\n                h-[46px]\n                grid\n                grid-cols-[24px_1fr_24px]\n                items-center\n                px-[2px]\n                gap-[2px]\n              " },
-                            React.createElement("button", { onClick: () => setEntrada(prev => Math.max(0, prev - 1)), className: "\n                    bg-red-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "-"),
+                            React.createElement("button", { onClick: () => setEntrada(prev => { const n = Math.max(0, prev - 1); falar(`Entrada ${formatarDinheiro(n)}`); return n; }), className: "\n                    bg-red-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "-"),
                             React.createElement("div", { className: "\n                  w-full\n                  text-center\n                  text-base\n                  font-black\n                  text-yellow-400\n                " }, formatarDinheiro(entrada)),
-                            React.createElement("button", { onClick: () => setEntrada(prev => prev + 1), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+"))),
+                            React.createElement("button", { onClick: () => setEntrada(prev => { const n = prev + 1; falar(`Entrada ${formatarDinheiro(n)}`); return n; }), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+"))),
                     React.createElement("div", null,
                         React.createElement("p", { className: "text-zinc-400 text-xs mb-[2px] text-center" }, "TELA"),
                         React.createElement("div", { className: "\n                bg-black\n                border\n                border-blue-500\n                rounded-sm\n                h-[46px]\n                grid\n                grid-cols-2\n                items-center\n                px-[2px]\n                gap-[2px]\n              " },
                             React.createElement("button", { onClick: () => setZoomTela(prev => Math.max(0.3, +(prev - 0.1).toFixed(1))), className: "\n                    bg-red-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "-"),
                             React.createElement("button", { onClick: () => setZoomTela(prev => Math.min(2.0, +(prev + 0.1).toFixed(1))), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+")))),
+                React.createElement("div", { className: "mt-4 border border-purple-500 rounded-lg p-3 bg-black" },
+                    React.createElement("p", { className: "text-purple-300 text-center text-xs font-black mb-2" }, "VOZ DO APLICATIVO"),
+                    React.createElement("button", { onClick: alternarVoz, className: `w-full py-3 rounded-lg text-xs font-black border ${vozAtiva ? "bg-green-700 text-white border-green-400" : "bg-zinc-800 text-zinc-300 border-zinc-600"}` }, vozAtiva ? "🔊 VOZ ATIVADA" : "🔇 VOZ DESATIVADA")),
                 React.createElement("div", { className: "mt-4 border border-blue-500 rounded-lg p-3 bg-black" },
                     React.createElement("p", { className: "text-blue-300 text-center text-xs font-black mb-2" }, "BACKUPS FIREBASE"),
                     React.createElement("div", { className: "grid grid-cols-1 gap-2" },
@@ -1056,7 +1111,7 @@ function App() {
                 React.createElement("div", { className: "flex gap-[2px]" },
                     React.createElement("input", { value: novoJogador, onChange: (e) => setNovoJogador(e.target.value), placeholder: "Nome do jogador", className: "\n                flex-1\n                bg-black\n                border\n                border-zinc-700\n                rounded-sm\n                px-4\n                py-4\n                text-sm\n              " }),
                     React.createElement("button", { onClick: adicionarJogador, className: "\n                bg-yellow-500\n                text-black\n                px-5\n                rounded-sm\n                text-sm\n                font-black\n              " }, "+"),
-                    React.createElement("button", { onClick: () => setAbrirConfig(prev => !prev), className: "\n                bg-blue-600\n                text-white\n                w-10\n                rounded-sm\n                text-xl\n                font-black\n                flex\n                items-center\n                justify-center\n              ", title: "Configura\u00E7\u00F5es" }, "\u2699"))),
+                    React.createElement("button", { onClick: () => setAbrirConfig(prev => { const n = !prev; falar(n ? "Configurações abertas" : "Configurações fechadas"); return n; }), className: "\n                bg-blue-600\n                text-white\n                w-10\n                rounded-sm\n                text-xl\n                font-black\n                flex\n                items-center\n                justify-center\n              ", title: "Configura\u00E7\u00F5es" }, "\u2699"))),
             React.createElement("p", { className: "\n          text-zinc-500\n          text-[10px]\n          text-center\n          mt-[-4px]\n        " }, "Toque no n\u00FAmero do jogador para ativar ou pular nas pr\u00F3ximas rodadas."),
             React.createElement("div", { className: "space-y-4" }, jogadores.map((jogador, index) => (React.createElement("div", { key: jogador.id, draggable: true, onDragStart: () => setDragIndex(index), onDragOver: (e) => e.preventDefault(), onDrop: () => {
                     if (dragIndex === null ||
