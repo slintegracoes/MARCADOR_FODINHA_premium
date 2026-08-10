@@ -103,26 +103,125 @@ function App() {
         try { return localStorage.getItem("fodinha_permissao_som") === "true" ? "SOM LIBERADO" : "SOM AINDA NÃO LIBERADO"; } catch (e) { return "SOM AINDA NÃO LIBERADO"; }
     });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
-    let vozPreferidaCache = null;
-    let audioFallbackAtual = null;
+    function obterAudioVozGlobal() {
+        if (!window.__fodinhaAudioVoz) {
+            const audio = new Audio();
+            audio.preload = "auto";
+            audio.volume = 1;
+            audio.setAttribute("playsinline", "true");
+            audio.setAttribute("webkit-playsinline", "true");
+            window.__fodinhaAudioVoz = audio;
+        }
+        return window.__fodinhaAudioVoz;
+    }
     function carregarVozPreferida() {
         if (!("speechSynthesis" in window)) return null;
         try {
             const vozes = window.speechSynthesis.getVoices() || [];
-            vozPreferidaCache =
+            window.__fodinhaVozPreferida =
                 vozes.find(v => String(v.lang || "").toLowerCase() === "pt-br") ||
                 vozes.find(v => String(v.lang || "").toLowerCase().startsWith("pt")) ||
                 vozes.find(v => /portugu/i.test(String(v.name || ""))) ||
                 vozes[0] || null;
         } catch (e) {
-            vozPreferidaCache = null;
+            window.__fodinhaVozPreferida = null;
         }
-        return vozPreferidaCache;
+        return window.__fodinhaVozPreferida;
     }
     function desbloquearAudioMovel() {
         try {
-            if ("speechSynthesis" in window && window.speechSynthesis.paused) {
-                window.speechSynthesis.resume();
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+                if (!window.__fodinhaAudioContext) window.__fodinhaAudioContext = new AudioCtx();
+                const ctx = window.__fodinhaAudioContext;
+                if (ctx.state === "suspended") ctx.resume().catch(() => { });
+            }
+        } catch (e) { }
+        try {
+            if ("speechSynthesis" in window && window.speechSynthesis.paused) window.speechSynthesis.resume();
+        } catch (e) { }
+        window.__fodinhaVozDesbloqueada = true;
+    }
+    function falarNativo(texto) {
+        if (!("speechSynthesis" in window) || !texto) return false;
+        try {
+            const synth = window.speechSynthesis;
+            const fala = new SpeechSynthesisUtterance(String(texto));
+            fala.lang = "pt-BR";
+            fala.rate = 1;
+            fala.pitch = 1;
+            fala.volume = 1;
+            const voz = window.__fodinhaVozPreferida || carregarVozPreferida();
+            if (voz) fala.voice = voz;
+            try { synth.cancel(); } catch (e) { }
+            try { synth.resume(); } catch (e) { }
+            synth.speak(fala);
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+    function montarUrlsTTS(texto) {
+        const frase = String(texto || "").trim().slice(0, 190);
+        return [
+            `https://api.streamelements.com/kappa/v2/speech?voice=Ricardo&text=${encodeURIComponent(frase)}`,
+            `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q=${encodeURIComponent(frase)}`
+        ];
+    }
+    function falarViaAudioRemoto(texto, indice = 0) {
+        if (!texto) return;
+        const urls = montarUrlsTTS(texto);
+        if (indice >= urls.length) {
+            falarNativo(texto);
+            return;
+        }
+        try {
+            const audio = obterAudioVozGlobal();
+            audio.pause();
+            audio.currentTime = 0;
+            audio.onended = null;
+            audio.onerror = () => {
+                audio.onerror = null;
+                falarViaAudioRemoto(texto, indice + 1);
+            };
+            audio.src = urls[indice];
+            const tentativa = audio.play();
+            if (tentativa && typeof tentativa.catch === "function") {
+                tentativa.catch(() => falarViaAudioRemoto(texto, indice + 1));
+            }
+        } catch (e) {
+            falarViaAudioRemoto(texto, indice + 1);
+        }
+    }
+    function emitirFala(texto) {
+        if (!texto) return;
+        desbloquearAudioMovel();
+        const ehCelular = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || "");
+        if (ehCelular) {
+            falarViaAudioRemoto(texto);
+        } else if (!falarNativo(texto)) {
+            falarViaAudioRemoto(texto);
+        }
+    }
+    function permitirSomCelular() {
+        desbloquearAudioMovel();
+        let liberouPlayer = false;
+        try {
+            const audio = obterAudioVozGlobal();
+            // WAV silencioso curtíssimo: serve para desbloquear ESTE MESMO player no toque do usuário.
+            audio.src = "data:audio/wav;base64,UklGRiwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQgAAACAgICAgICA";
+            audio.volume = 1;
+            const p = audio.play();
+            liberouPlayer = true;
+            if (p && typeof p.then === "function") {
+                p.then(() => {
+                    setPermissaoSom(true);
+                    setStatusSom("PLAYER DE VOZ LIBERADO");
+                    try { localStorage.setItem("fodinha_permissao_som", "true"); } catch (e) { }
+                    falarViaAudioRemoto("Som liberado. A voz do aplicativo está funcionando.");
+                }).catch(() => {
+                    setStatusSom("O CELULAR BLOQUEOU O PLAYER. ABRA ESTE ARQUIVO NO CHROME.");
+                });
             }
         } catch (e) { }
         try {
@@ -133,63 +232,62 @@ function App() {
                 if (ctx.state === "suspended") ctx.resume().catch(() => { });
                 const osc = ctx.createOscillator();
                 const gain = ctx.createGain();
-                gain.gain.value = 0.00001;
+                gain.gain.setValueAtTime(0.10, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15);
+                osc.frequency.value = 700;
                 osc.connect(gain);
                 gain.connect(ctx.destination);
-                osc.start();
-                osc.stop(ctx.currentTime + 0.01);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.15);
             }
         } catch (e) { }
-        window.__fodinhaVozDesbloqueada = true;
+        if (liberouPlayer) {
+            setPermissaoSom(true);
+            setStatusSom("LIBERANDO PLAYER DE VOZ...");
+            try { localStorage.setItem("fodinha_permissao_som", "true"); } catch (e) { }
+        }
     }
-    function falarViaAudio(texto) {
-        if (!texto) return;
-        try {
-            if (audioFallbackAtual) {
-                audioFallbackAtual.pause();
-                audioFallbackAtual = null;
-            }
-            const frase = String(texto).slice(0, 180);
-            const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q=${encodeURIComponent(frase)}`;
-            const audio = new Audio(url);
-            audio.preload = "auto";
-            audio.volume = 1;
-            audioFallbackAtual = audio;
-            audio.play().catch(() => { });
-        } catch (e) { }
-    }
-    function emitirFala(texto) {
-        if (!texto) return;
+    function testarVozCelular() {
         desbloquearAudioMovel();
-        if (!("speechSynthesis" in window)) {
-            falarViaAudio(texto);
-            return;
-        }
-        try {
-            const synth = window.speechSynthesis;
-            let iniciou = false;
-            const fala = new SpeechSynthesisUtterance(String(texto));
-            fala.lang = "pt-BR";
-            fala.rate = 1;
-            fala.pitch = 1;
-            fala.volume = 1;
-            const voz = vozPreferidaCache || carregarVozPreferida();
-            if (voz) fala.voice = voz;
-            fala.onstart = () => { iniciou = true; };
-            fala.onerror = () => { if (!iniciou) falarViaAudio(texto); };
-            try { synth.cancel(); } catch (e) { }
-            if (synth.paused) synth.resume();
-            synth.speak(fala);
-            setTimeout(() => {
-                if (!iniciou && !synth.speaking) {
-                    try { synth.cancel(); } catch (e) { }
-                    falarViaAudio(texto);
-                }
-            }, 1200);
-        } catch (e) {
-            falarViaAudio(texto);
-        }
+        falarViaAudioRemoto("Teste de voz. Se você está ouvindo esta mensagem, a voz do aplicativo está funcionando no celular.");
     }
+    function alternarVoz() {
+        desbloquearAudioMovel();
+        setVozAtiva(prev => {
+            const novo = !prev;
+            try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
+            if (novo) {
+                emitirFala("Voz ativada");
+            } else {
+                try { if ("speechSynthesis" in window) window.speechSynthesis.cancel(); } catch (e) { }
+                try {
+                    const audio = window.__fodinhaAudioVoz;
+                    if (audio) { audio.pause(); audio.currentTime = 0; }
+                } catch (e) { }
+            }
+            return novo;
+        });
+    }
+    useEffect(() => {
+        const destravar = () => desbloquearAudioMovel();
+        document.addEventListener("touchstart", destravar, { passive: true });
+        document.addEventListener("pointerdown", destravar, { passive: true });
+        obterAudioVozGlobal();
+        if ("speechSynthesis" in window) {
+            carregarVozPreferida();
+            const atualizarVozes = () => carregarVozPreferida();
+            try { window.speechSynthesis.addEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+            return () => {
+                document.removeEventListener("touchstart", destravar);
+                document.removeEventListener("pointerdown", destravar);
+                try { window.speechSynthesis.removeEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+            };
+        }
+        return () => {
+            document.removeEventListener("touchstart", destravar);
+            document.removeEventListener("pointerdown", destravar);
+        };
+    }, []);
     function falar(texto) {
         if (!vozAtiva || !texto) return;
         emitirFala(texto);
