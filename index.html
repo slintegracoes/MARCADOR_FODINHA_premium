@@ -213,10 +213,26 @@ function App() {
         return falarNativoAndroid(frase);
     }
 
+    function enviarVozKodular(texto) {
+        try {
+            if (window.Kodular && typeof window.Kodular.setWebViewString === "function") {
+                window.Kodular.setWebViewString(String(texto || ""));
+                return true;
+            }
+            if (window.AppInventor && typeof window.AppInventor.setWebViewString === "function") {
+                window.AppInventor.setWebViewString(String(texto || ""));
+                return true;
+            }
+        } catch (e) { }
+        return false;
+    }
+
     function falar(texto) {
         if (!vozAtiva || !texto) return;
-        // Não usa fila de Promises: no modo aplicativo isso pode perder
-        // a autorização de áudio concedida pelo toque do usuário.
+        // Dentro do APK/Kodular, a fala é feita NATIVAMENTE pelo componente
+        // Text To Speech do aplicativo, fora do WebViewer.
+        if (enviarVozKodular(texto)) return;
+        // No navegador comum, mantém o fallback de áudio/voz existente.
         tocarVozComFallback(texto).catch(() => {});
     }
 
@@ -226,9 +242,10 @@ function App() {
         try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
         if (novo) {
             desbloquearSomAplicativo();
-            // IMPORTANTE NO CELULAR/WEBVIEW: tocar no MESMO evento do clique.
-            // Qualquer setTimeout pode perder a permissão temporária de reprodução.
-            tocarVozComFallback("Som ativado").catch(() => {});
+            // No APK, envia diretamente ao Text To Speech nativo do Kodular.
+            if (!enviarVozKodular("Som ativado")) {
+                tocarVozComFallback("Som ativado").catch(() => {});
+            }
         } else {
             if (audioVozRef.current) {
                 try { audioVozRef.current.pause(); audioVozRef.current.currentTime = 0; } catch (e) { }
