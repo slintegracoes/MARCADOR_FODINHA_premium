@@ -98,6 +98,7 @@ function App() {
     });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
     let vozPreferidaCache = null;
+    let audioFallbackAtual = null;
     function carregarVozPreferida() {
         if (!("speechSynthesis" in window)) return null;
         try {
@@ -112,10 +113,55 @@ function App() {
         }
         return vozPreferidaCache;
     }
+    function desbloquearAudioMovel() {
+        try {
+            if ("speechSynthesis" in window && window.speechSynthesis.paused) {
+                window.speechSynthesis.resume();
+            }
+        } catch (e) { }
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+                if (!window.__fodinhaAudioContext) window.__fodinhaAudioContext = new AudioCtx();
+                const ctx = window.__fodinhaAudioContext;
+                if (ctx.state === "suspended") ctx.resume().catch(() => { });
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                gain.gain.value = 0.00001;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start();
+                osc.stop(ctx.currentTime + 0.01);
+            }
+        } catch (e) { }
+        window.__fodinhaVozDesbloqueada = true;
+    }
+    function falarViaAudio(texto) {
+        if (!texto) return;
+        try {
+            if (audioFallbackAtual) {
+                audioFallbackAtual.pause();
+                audioFallbackAtual = null;
+            }
+            const frase = String(texto).slice(0, 180);
+            const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q=${encodeURIComponent(frase)}`;
+            const audio = new Audio(url);
+            audio.preload = "auto";
+            audio.volume = 1;
+            audioFallbackAtual = audio;
+            audio.play().catch(() => { });
+        } catch (e) { }
+    }
     function emitirFala(texto) {
-        if (!texto || !("speechSynthesis" in window)) return;
+        if (!texto) return;
+        desbloquearAudioMovel();
+        if (!("speechSynthesis" in window)) {
+            falarViaAudio(texto);
+            return;
+        }
         try {
             const synth = window.speechSynthesis;
+            let iniciou = false;
             const fala = new SpeechSynthesisUtterance(String(texto));
             fala.lang = "pt-BR";
             fala.rate = 1;
@@ -123,35 +169,66 @@ function App() {
             fala.volume = 1;
             const voz = vozPreferidaCache || carregarVozPreferida();
             if (voz) fala.voice = voz;
+            fala.onstart = () => { iniciou = true; };
+            fala.onerror = () => { if (!iniciou) falarViaAudio(texto); };
+            try { synth.cancel(); } catch (e) { }
             if (synth.paused) synth.resume();
             synth.speak(fala);
-        } catch (e) { }
+            setTimeout(() => {
+                if (!iniciou && !synth.speaking) {
+                    try { synth.cancel(); } catch (e) { }
+                    falarViaAudio(texto);
+                }
+            }, 1200);
+        } catch (e) {
+            falarViaAudio(texto);
+        }
     }
     function falar(texto) {
-        if (!vozAtiva || !texto || !("speechSynthesis" in window)) return;
+        if (!vozAtiva || !texto) return;
         emitirFala(texto);
     }
+    function testarVozCelular() {
+        desbloquearAudioMovel();
+        emitirFala("Teste de voz. O som do aplicativo está funcionando.");
+    }
     function alternarVoz() {
+        desbloquearAudioMovel();
         setVozAtiva(prev => {
             const novo = !prev;
             try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
             if (novo) {
-                // No celular a primeira fala precisa ocorrer diretamente dentro do toque.
                 carregarVozPreferida();
                 emitirFala("Voz ativada");
-            } else if ("speechSynthesis" in window) {
-                try { window.speechSynthesis.cancel(); } catch (e) { }
+            } else {
+                if ("speechSynthesis" in window) {
+                    try { window.speechSynthesis.cancel(); } catch (e) { }
+                }
+                if (audioFallbackAtual) {
+                    try { audioFallbackAtual.pause(); } catch (e) { }
+                    audioFallbackAtual = null;
+                }
             }
             return novo;
         });
     }
     useEffect(() => {
-        if (!("speechSynthesis" in window)) return;
-        carregarVozPreferida();
-        const atualizarVozes = () => carregarVozPreferida();
-        try { window.speechSynthesis.addEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+        const destravar = () => desbloquearAudioMovel();
+        document.addEventListener("touchstart", destravar, { passive: true });
+        document.addEventListener("pointerdown", destravar, { passive: true });
+        if ("speechSynthesis" in window) {
+            carregarVozPreferida();
+            const atualizarVozes = () => carregarVozPreferida();
+            try { window.speechSynthesis.addEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+            return () => {
+                document.removeEventListener("touchstart", destravar);
+                document.removeEventListener("pointerdown", destravar);
+                try { window.speechSynthesis.removeEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+            };
+        }
         return () => {
-            try { window.speechSynthesis.removeEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+            document.removeEventListener("touchstart", destravar);
+            document.removeEventListener("pointerdown", destravar);
         };
     }, []);
     const [confirmacao, setConfirmacao] = useState(null);
@@ -1113,7 +1190,9 @@ function App() {
                             React.createElement("button", { onClick: () => setZoomTela(prev => Math.min(2.0, +(prev + 0.1).toFixed(1))), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+")))),
                 React.createElement("div", { className: "mt-4 border border-purple-500 rounded-lg p-3 bg-black" },
                     React.createElement("p", { className: "text-purple-300 text-center text-xs font-black mb-2" }, "VOZ DO APLICATIVO"),
-                    React.createElement("button", { onClick: alternarVoz, className: `w-full py-3 rounded-lg text-xs font-black border ${vozAtiva ? "bg-green-700 text-white border-green-400" : "bg-zinc-800 text-zinc-300 border-zinc-600"}` }, vozAtiva ? "🔊 VOZ ATIVADA" : "🔇 VOZ DESATIVADA")),
+                    React.createElement("div", { className: "grid grid-cols-1 gap-2" },
+                        React.createElement("button", { onClick: alternarVoz, className: `w-full py-3 rounded-lg text-xs font-black border ${vozAtiva ? "bg-green-700 text-white border-green-400" : "bg-zinc-800 text-zinc-300 border-zinc-600"}` }, vozAtiva ? "🔊 VOZ ATIVADA" : "🔇 VOZ DESATIVADA"),
+                        React.createElement("button", { onClick: testarVozCelular, className: "w-full py-3 rounded-lg text-xs font-black border bg-purple-700 text-white border-purple-400" }, "📱 TESTAR VOZ NO CELULAR"))),
                 React.createElement("div", { className: "mt-4 border border-blue-500 rounded-lg p-3 bg-black" },
                     React.createElement("p", { className: "text-blue-300 text-center text-xs font-black mb-2" }, "BACKUPS FIREBASE"),
                     React.createElement("div", { className: "grid grid-cols-1 gap-2" },
