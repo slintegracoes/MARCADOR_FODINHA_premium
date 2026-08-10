@@ -60,7 +60,7 @@ input:focus{
 
 <body>
 
-<!-- VERSAO_VOZ_EMBUTIDA_CELULAR_2026-08-10 -->
+<!-- VERSAO_VOZ_NATURAL_CELULAR_2026-08-10 -->
 <div id="root"></div>
 
 <script>
@@ -161,26 +161,65 @@ function App() {
             return false;
         }
     }
+    function escolherVozNatural() {
+        try {
+            if (!("speechSynthesis" in window)) return null;
+            const vozes = window.speechSynthesis.getVoices() || [];
+            return vozes.find(v => /^pt-BR$/i.test(v.lang) && /google|samsung|microsoft|natural|premium/i.test(v.name))
+                || vozes.find(v => /^pt-BR$/i.test(v.lang))
+                || vozes.find(v => /^pt/i.test(v.lang))
+                || null;
+        } catch (e) { return null; }
+    }
+    function falarVozNatural(texto, usarFallback = true) {
+        try {
+            if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+                if (usarFallback) reproduzirAudioEmbutido(chaveAudioDaFala(texto));
+                return false;
+            }
+            const synth = window.speechSynthesis;
+            synth.cancel();
+            const u = new SpeechSynthesisUtterance(String(texto || ""));
+            u.lang = "pt-BR";
+            u.rate = 0.96;
+            u.pitch = 1.0;
+            u.volume = 1.0;
+            const voz = escolherVozNatural();
+            if (voz) u.voice = voz;
+            let iniciou = false;
+            u.onstart = () => { iniciou = true; setStatusSom("VOZ NATURAL ATIVA"); };
+            u.onerror = () => { if (usarFallback && !iniciou) reproduzirAudioEmbutido(chaveAudioDaFala(texto)); };
+            synth.resume();
+            synth.speak(u);
+            // Alguns Androids pausam o sintetizador quando a página volta do segundo plano.
+            setTimeout(() => { try { if (synth.paused) synth.resume(); } catch (e) {} }, 80);
+            return true;
+        } catch (e) {
+            if (usarFallback) reproduzirAudioEmbutido(chaveAudioDaFala(texto));
+            return false;
+        }
+    }
     function falar(texto) {
         if (!vozAtiva || !texto) return;
-        reproduzirAudioEmbutido(chaveAudioDaFala(texto));
+        falarVozNatural(texto, true);
     }
     function permitirSomCelular() {
         setPermissaoSom(true);
         setStatusSom("SOM EMBUTIDO ATIVADO");
         try { localStorage.setItem("fodinha_permissao_som", "true"); } catch (e) { }
         reproduzirAudioEmbutido("teste");
+        setTimeout(() => falarVozNatural("Som liberado. Voz natural ativada.", false), 250);
     }
     function testarVozCelular() {
-        setStatusSom("TESTANDO SOM EMBUTIDO...");
-        const ok = reproduzirAudioEmbutido("teste");
-        if (ok) setStatusSom("SOM EMBUTIDO PRONTO");
+        setStatusSom("TESTANDO VOZ NATURAL...");
+        const ok = falarVozNatural("Teste de voz. O som está funcionando normalmente.", true);
+        if (ok) setStatusSom("TESTANDO VOZ NATURAL...");
     }
     function alternarVoz() {
         setVozAtiva(prev => {
             const novo = !prev;
             try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
-            if (novo) reproduzirAudioEmbutido("voz_ativada");
+            if (novo) falarVozNatural("Voz ativada.", true);
             else {
                 try { const audio = window.__fodinhaAudioVoz; if (audio) { audio.pause(); audio.currentTime = 0; } } catch (e) { }
             }
@@ -1148,12 +1187,12 @@ function App() {
                             React.createElement("button", { onClick: () => setZoomTela(prev => Math.max(0.3, +(prev - 0.1).toFixed(1))), className: "\n                    bg-red-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "-"),
                             React.createElement("button", { onClick: () => setZoomTela(prev => Math.min(2.0, +(prev + 0.1).toFixed(1))), className: "\n                    bg-green-600\n                    rounded-sm\n                    h-8\n                    text-xs\n                    font-black\n                  " }, "+")))),
                 React.createElement("div", { className: "mt-4 border border-purple-500 rounded-lg p-3 bg-black" },
-                    React.createElement("p", { className: "text-purple-300 text-center text-xs font-black mb-2" }, "VOZ DO APLICATIVO"),
+                    React.createElement("p", { className: "text-purple-300 text-center text-xs font-black mb-2" }, "VOZ NATURAL DO APLICATIVO"),
                     React.createElement("div", { className: "grid grid-cols-1 gap-2" },
                         React.createElement("button", { onClick: permitirSomCelular, className: `w-full py-3 rounded-lg text-xs font-black border ${permissaoSom ? "bg-blue-700 text-white border-blue-300" : "bg-orange-600 text-white border-orange-300"}` }, permissaoSom ? "✅ SOM EMBUTIDO ATIVADO" : "🔊 ATIVAR SOM NO CELULAR"),
                         React.createElement("div", { className: `text-center text-[11px] font-black rounded-md border px-2 py-2 ${permissaoSom ? "text-green-300 border-green-700 bg-green-950/40" : "text-orange-300 border-orange-700 bg-orange-950/40"}` }, statusSom),
                         React.createElement("button", { onClick: alternarVoz, className: `w-full py-3 rounded-lg text-xs font-black border ${vozAtiva ? "bg-green-700 text-white border-green-400" : "bg-zinc-800 text-zinc-300 border-zinc-600"}` }, vozAtiva ? "🔊 VOZ ATIVADA" : "🔇 VOZ DESATIVADA"),
-                        React.createElement("button", { onClick: testarVozCelular, className: "w-full py-3 rounded-lg text-xs font-black border bg-purple-700 text-white border-purple-400" }, "📱 TESTAR SOM / VOZ"))),
+                        React.createElement("button", { onClick: testarVozCelular, className: "w-full py-3 rounded-lg text-xs font-black border bg-purple-700 text-white border-purple-400" }, "📱 TESTAR VOZ NATURAL"))),
                 React.createElement("div", { className: "mt-4 border border-blue-500 rounded-lg p-3 bg-black" },
                     React.createElement("p", { className: "text-blue-300 text-center text-xs font-black mb-2" }, "BACKUPS FIREBASE"),
                     React.createElement("div", { className: "grid grid-cols-1 gap-2" },
