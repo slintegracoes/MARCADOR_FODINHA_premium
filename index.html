@@ -96,6 +96,12 @@ function App() {
             return true;
         }
     });
+    const [permissaoSom, setPermissaoSom] = useState(() => {
+        try { return localStorage.getItem("fodinha_permissao_som") === "true"; } catch (e) { return false; }
+    });
+    const [statusSom, setStatusSom] = useState(() => {
+        try { return localStorage.getItem("fodinha_permissao_som") === "true" ? "SOM LIBERADO" : "SOM AINDA NÃO LIBERADO"; } catch (e) { return "SOM AINDA NÃO LIBERADO"; }
+    });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
     let vozPreferidaCache = null;
     let audioFallbackAtual = null;
@@ -187,6 +193,55 @@ function App() {
     function falar(texto) {
         if (!vozAtiva || !texto) return;
         emitirFala(texto);
+    }
+    function permitirSomCelular() {
+        // Não existe uma permissão de "som" padrão no navegador como câmera/microfone.
+        // Este botão executa a liberação de áudio exigida por Android/iPhone no próprio toque do usuário.
+        let liberado = false;
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+                if (!window.__fodinhaAudioContext) window.__fodinhaAudioContext = new AudioCtx();
+                const ctx = window.__fodinhaAudioContext;
+                if (ctx.state === "suspended") ctx.resume().catch(() => { });
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                gain.gain.setValueAtTime(0.08, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
+                osc.frequency.value = 660;
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.12);
+                liberado = true;
+            }
+        } catch (e) { }
+        try {
+            if ("speechSynthesis" in window) {
+                const synth = window.speechSynthesis;
+                try { synth.cancel(); } catch (e) { }
+                try { synth.resume(); } catch (e) { }
+                carregarVozPreferida();
+                const fala = new SpeechSynthesisUtterance("Som permitido. Voz do aplicativo liberada.");
+                fala.lang = "pt-BR";
+                fala.volume = 1;
+                fala.rate = 1;
+                const voz = vozPreferidaCache || carregarVozPreferida();
+                if (voz) fala.voice = voz;
+                fala.onstart = () => {
+                    setStatusSom("SOM E VOZ LIBERADOS");
+                };
+                fala.onerror = () => {
+                    setStatusSom("SOM LIBERADO. VOZ NATIVA NÃO RESPONDEU");
+                };
+                synth.speak(fala);
+                liberado = true;
+            }
+        } catch (e) { }
+        window.__fodinhaVozDesbloqueada = true;
+        setPermissaoSom(true);
+        setStatusSom(liberado ? "SOM LIBERADO — AGUARDE A FRASE DE TESTE" : "NAVEGADOR NÃO LIBEROU O ÁUDIO");
+        try { localStorage.setItem("fodinha_permissao_som", "true"); } catch (e) { }
     }
     function testarVozCelular() {
         desbloquearAudioMovel();
@@ -1191,6 +1246,8 @@ function App() {
                 React.createElement("div", { className: "mt-4 border border-purple-500 rounded-lg p-3 bg-black" },
                     React.createElement("p", { className: "text-purple-300 text-center text-xs font-black mb-2" }, "VOZ DO APLICATIVO"),
                     React.createElement("div", { className: "grid grid-cols-1 gap-2" },
+                        React.createElement("button", { onClick: permitirSomCelular, className: `w-full py-3 rounded-lg text-xs font-black border ${permissaoSom ? "bg-blue-700 text-white border-blue-300" : "bg-orange-600 text-white border-orange-300"}` }, permissaoSom ? "✅ SOM PERMITIDO / LIBERADO" : "🔊 PERMITIR SOM NO CELULAR"),
+                        React.createElement("div", { className: `text-center text-[11px] font-black rounded-md border px-2 py-2 ${permissaoSom ? "text-green-300 border-green-700 bg-green-950/40" : "text-orange-300 border-orange-700 bg-orange-950/40"}` }, statusSom),
                         React.createElement("button", { onClick: alternarVoz, className: `w-full py-3 rounded-lg text-xs font-black border ${vozAtiva ? "bg-green-700 text-white border-green-400" : "bg-zinc-800 text-zinc-300 border-zinc-600"}` }, vozAtiva ? "🔊 VOZ ATIVADA" : "🔇 VOZ DESATIVADA"),
                         React.createElement("button", { onClick: testarVozCelular, className: "w-full py-3 rounded-lg text-xs font-black border bg-purple-700 text-white border-purple-400" }, "📱 TESTAR VOZ NO CELULAR"))),
                 React.createElement("div", { className: "mt-4 border border-blue-500 rounded-lg p-3 bg-black" },
