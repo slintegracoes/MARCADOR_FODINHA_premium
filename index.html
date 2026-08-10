@@ -97,37 +97,63 @@ function App() {
         }
     });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
-    function falar(texto) {
-        if (!vozAtiva || !texto || !("speechSynthesis" in window))
-            return;
+    let vozPreferidaCache = null;
+    function carregarVozPreferida() {
+        if (!("speechSynthesis" in window)) return null;
         try {
-            window.speechSynthesis.cancel();
+            const vozes = window.speechSynthesis.getVoices() || [];
+            vozPreferidaCache =
+                vozes.find(v => String(v.lang || "").toLowerCase() === "pt-br") ||
+                vozes.find(v => String(v.lang || "").toLowerCase().startsWith("pt")) ||
+                vozes.find(v => /portugu/i.test(String(v.name || ""))) ||
+                vozes[0] || null;
+        } catch (e) {
+            vozPreferidaCache = null;
+        }
+        return vozPreferidaCache;
+    }
+    function emitirFala(texto) {
+        if (!texto || !("speechSynthesis" in window)) return;
+        try {
+            const synth = window.speechSynthesis;
             const fala = new SpeechSynthesisUtterance(String(texto));
             fala.lang = "pt-BR";
             fala.rate = 1;
             fala.pitch = 1;
             fala.volume = 1;
-            window.speechSynthesis.speak(fala);
+            const voz = vozPreferidaCache || carregarVozPreferida();
+            if (voz) fala.voice = voz;
+            if (synth.paused) synth.resume();
+            synth.speak(fala);
         } catch (e) { }
+    }
+    function falar(texto) {
+        if (!vozAtiva || !texto || !("speechSynthesis" in window)) return;
+        emitirFala(texto);
     }
     function alternarVoz() {
         setVozAtiva(prev => {
             const novo = !prev;
             try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
-            if (novo && ("speechSynthesis" in window)) {
-                setTimeout(() => {
-                    try {
-                        const fala = new SpeechSynthesisUtterance("Voz ativada");
-                        fala.lang = "pt-BR";
-                        window.speechSynthesis.speak(fala);
-                    } catch (e) { }
-                }, 50);
-            } else if (!novo && ("speechSynthesis" in window)) {
-                window.speechSynthesis.cancel();
+            if (novo) {
+                // No celular a primeira fala precisa ocorrer diretamente dentro do toque.
+                carregarVozPreferida();
+                emitirFala("Voz ativada");
+            } else if ("speechSynthesis" in window) {
+                try { window.speechSynthesis.cancel(); } catch (e) { }
             }
             return novo;
         });
     }
+    useEffect(() => {
+        if (!("speechSynthesis" in window)) return;
+        carregarVozPreferida();
+        const atualizarVozes = () => carregarVozPreferida();
+        try { window.speechSynthesis.addEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+        return () => {
+            try { window.speechSynthesis.removeEventListener("voiceschanged", atualizarVozes); } catch (e) { }
+        };
+    }, []);
     const [confirmacao, setConfirmacao] = useState(null);
     function abrirConfirmacao(titulo, mensagem, acao) {
         const scrollAtual = window.scrollY || document.documentElement.scrollTop || 0;
