@@ -98,7 +98,43 @@ function App() {
     });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
     const audioVozRef = React.useRef(null);
-    const filaVozRef = React.useRef(Promise.resolve());
+    const audioDesbloqueadoRef = React.useRef(false);
+    const audioContextRef = React.useRef(null);
+
+    function desbloquearSomAplicativo() {
+        try {
+            if (!audioContextRef.current) {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (AC) audioContextRef.current = new AC();
+            }
+            const ctx = audioContextRef.current;
+            if (ctx && ctx.state === "suspended") ctx.resume().catch(() => {});
+        } catch (e) { }
+
+        try {
+            if (!audioVozRef.current) {
+                const audio = document.createElement("audio");
+                audio.preload = "auto";
+                audio.volume = 1;
+                audio.setAttribute("playsinline", "");
+                audio.setAttribute("webkit-playsinline", "");
+                audioVozRef.current = audio;
+            }
+            // WAV silencioso curtíssimo para liberar mídia no mesmo toque do usuário.
+            const a = audioVozRef.current;
+            const silencio = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=";
+            a.src = silencio;
+            const p = a.play();
+            if (p && typeof p.then === "function") {
+                p.then(() => {
+                    audioDesbloqueadoRef.current = true;
+                    try { a.pause(); a.currentTime = 0; } catch (e) { }
+                }).catch(() => {});
+            } else {
+                audioDesbloqueadoRef.current = true;
+            }
+        } catch (e) { }
+    }
 
     function falarNativoAndroid(texto) {
         try {
@@ -121,18 +157,16 @@ function App() {
     function tocarUrlVoz(url) {
         return new Promise((resolve, reject) => {
             try {
-                if (audioVozRef.current) {
-                    try {
-                        audioVozRef.current.pause();
-                        audioVozRef.current.removeAttribute("src");
-                        audioVozRef.current.load();
-                    } catch (e) { }
+                if (!audioVozRef.current) {
+                    const audio = document.createElement("audio");
+                    audio.preload = "auto";
+                    audio.volume = 1;
+                    audio.setAttribute("playsinline", "");
+                    audio.setAttribute("webkit-playsinline", "");
+                    audioVozRef.current = audio;
                 }
-                const audio = document.createElement("audio");
-                audio.preload = "auto";
-                audio.volume = 1;
-                audio.setAttribute("playsinline", "");
-                audioVozRef.current = audio;
+                const audio = audioVozRef.current;
+                try { audio.pause(); } catch (e) { }
                 let terminou = false;
                 const finalizar = (ok, err) => {
                     if (terminou) return;
@@ -144,14 +178,12 @@ function App() {
                 audio.onended = () => finalizar(true);
                 audio.onerror = () => finalizar(false, new Error("audio_error"));
                 audio.src = url;
+                audio.load();
                 const p = audio.play();
                 if (p && typeof p.catch === "function") p.catch(err => finalizar(false, err));
                 setTimeout(() => {
-                    if (!terminou && audio.readyState === 0) {
-                        try { audio.pause(); } catch (e) { }
-                        finalizar(false, new Error("timeout"));
-                    }
-                }, 4500);
+                    if (!terminou && audio.readyState === 0) finalizar(false, new Error("timeout"));
+                }, 5000);
             } catch (e) {
                 reject(e);
             }
@@ -177,7 +209,9 @@ function App() {
 
     function falar(texto) {
         if (!vozAtiva || !texto) return;
-        filaVozRef.current = filaVozRef.current.catch(() => {}).then(() => tocarVozComFallback(texto));
+        // Não usa fila de Promises: no modo aplicativo isso pode perder
+        // a autorização de áudio concedida pelo toque do usuário.
+        tocarVozComFallback(texto).catch(() => {});
     }
 
     function alternarVoz() {
@@ -185,7 +219,8 @@ function App() {
         setVozAtiva(novo);
         try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
         if (novo) {
-            tocarVozComFallback("Som ativado");
+            desbloquearSomAplicativo();
+            setTimeout(() => tocarVozComFallback("Som ativado").catch(() => {}), 80);
         } else {
             if (audioVozRef.current) {
                 try { audioVozRef.current.pause(); audioVozRef.current.currentTime = 0; } catch (e) { }
@@ -203,6 +238,18 @@ function App() {
             scrollY: scrollAtual
         });
     }
+    useEffect(() => {
+        function liberarNoPrimeiroToque() {
+            if (!audioDesbloqueadoRef.current) desbloquearSomAplicativo();
+        }
+        document.addEventListener("pointerdown", liberarNoPrimeiroToque, { passive: true });
+        document.addEventListener("touchstart", liberarNoPrimeiroToque, { passive: true });
+        return () => {
+            document.removeEventListener("pointerdown", liberarNoPrimeiroToque);
+            document.removeEventListener("touchstart", liberarNoPrimeiroToque);
+        };
+    }, []);
+
     function mostrarMensagemBackup(texto) {
         setMensagemBackup(texto);
         falar(String(texto).replace(/[✅❌]/g, ""));
