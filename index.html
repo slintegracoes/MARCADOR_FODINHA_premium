@@ -97,133 +97,74 @@ function App() {
         }
     });
     const [livreAbertoId, setLivreAbertoId] = useState(null);
-    function obterAudioVozGlobal() {
-        if (!window.__fodinhaAudioVoz) {
-            const audio = new Audio();
-            audio.preload = "none";
-            audio.volume = 1;
-            audio.setAttribute("playsinline", "true");
-            audio.setAttribute("webkit-playsinline", "true");
-            window.__fodinhaAudioVoz = audio;
-        }
-        return window.__fodinhaAudioVoz;
-    }
-    function pararSomAtual() {
-        try {
-            const audio = window.__fodinhaAudioVoz;
-            if (audio) {
-                audio.pause();
-                audio.removeAttribute("src");
-                audio.load();
-            }
-        } catch (e) { }
-        try {
-            if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-        } catch (e) { }
-    }
-    function escolherVozNatural() {
+    function escolherVozAndroid() {
         try {
             if (!("speechSynthesis" in window)) return null;
             const vozes = window.speechSynthesis.getVoices() || [];
-            return vozes.find(v => /^pt-BR$/i.test(v.lang) && /google|samsung|microsoft|natural|premium|brasil/i.test(v.name))
+            return vozes.find(v => /^pt-BR$/i.test(v.lang) && /google|speech services|samsung|brasil|portugu/i.test(v.name))
                 || vozes.find(v => /^pt-BR$/i.test(v.lang))
                 || vozes.find(v => /^pt/i.test(v.lang))
                 || null;
-        } catch (e) { return null; }
+        } catch (e) {
+            return null;
+        }
     }
-    function falarVozNativa(texto) {
+    function falarNativoAndroid(texto, forcar = false) {
+        if (!texto) return false;
+        if (!forcar && !vozAtiva) return false;
         try {
             if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") return false;
             const synth = window.speechSynthesis;
-            synth.cancel();
-            const u = new SpeechSynthesisUtterance(String(texto || ""));
+            const u = new SpeechSynthesisUtterance(String(texto));
             u.lang = "pt-BR";
-            u.rate = 0.96;
+            u.rate = 0.95;
             u.pitch = 1.0;
             u.volume = 1.0;
-            const voz = escolherVozNatural();
+            const voz = escolherVozAndroid();
             if (voz) u.voice = voz;
-            synth.resume();
+            // No Android/Chrome, evitar cancel() imediatamente antes do speak,
+            // pois isso pode cancelar a nova fala antes de iniciar.
+            try { synth.resume(); } catch (e) { }
             synth.speak(u);
             return true;
         } catch (e) {
             return false;
         }
     }
-    function urlVozNaturalOnline(texto, alternativa = false) {
-        const frase = encodeURIComponent(String(texto || "").slice(0, 350));
-        if (!alternativa) {
-            return `https://api.streamelements.com/kappa/v2/speech?voice=Ricardo&text=${frase}`;
-        }
-        return `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q=${frase}`;
-    }
-    function falarVozNatural(texto) {
-        if (!texto) return;
-        pararSomAtual();
-        try {
-            const audio = obterAudioVozGlobal();
-            let tentouAlternativa = false;
-            let terminou = false;
-            const usarNativa = () => {
-                if (terminou) return;
-                terminou = true;
-                falarVozNativa(texto);
-            };
-            audio.onerror = () => {
-                if (!tentouAlternativa) {
-                    tentouAlternativa = true;
-                    try {
-                        audio.src = urlVozNaturalOnline(texto, true);
-                        const p2 = audio.play();
-                        if (p2 && typeof p2.catch === "function") p2.catch(usarNativa);
-                    } catch (e) { usarNativa(); }
-                } else {
-                    usarNativa();
-                }
-            };
-            audio.onplaying = () => { terminou = true; };
-            audio.src = urlVozNaturalOnline(texto, false);
-            const p = audio.play();
-            if (p && typeof p.catch === "function") {
-                p.catch(() => {
-                    if (!tentouAlternativa) {
-                        tentouAlternativa = true;
-                        try {
-                            audio.src = urlVozNaturalOnline(texto, true);
-                            const p2 = audio.play();
-                            if (p2 && typeof p2.catch === "function") p2.catch(usarNativa);
-                        } catch (e) { usarNativa(); }
-                    } else usarNativa();
-                });
-            }
-        } catch (e) {
-            falarVozNativa(texto);
-        }
-    }
     function falar(texto) {
-        if (!vozAtiva || !texto) return;
-        falarVozNatural(texto);
+        falarNativoAndroid(texto, false);
     }
     function alternarVoz() {
         const novo = !vozAtiva;
         setVozAtiva(novo);
         try { localStorage.setItem("fodinha_voz_ativa", String(novo)); } catch (e) { }
         if (novo) {
-            falarVozNatural("Som ativado.");
+            // Dispara diretamente no mesmo toque do botão.
+            falarNativoAndroid("Som ativado.", true);
         } else {
-            pararSomAtual();
+            try {
+                if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+            } catch (e) { }
         }
     }
     useEffect(() => {
-        obterAudioVozGlobal();
         try {
             if ("speechSynthesis" in window) {
+                // Força o Chrome/Android a carregar as vozes instaladas.
                 window.speechSynthesis.getVoices();
-                window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+                const atualizarVozes = () => {
+                    try { window.speechSynthesis.getVoices(); } catch (e) { }
+                };
+                window.speechSynthesis.addEventListener?.("voiceschanged", atualizarVozes);
+                window.__fodinhaAtualizarVozes = atualizarVozes;
             }
         } catch (e) { }
         return () => {
-            try { if ("speechSynthesis" in window) window.speechSynthesis.onvoiceschanged = null; } catch (e) { }
+            try {
+                if ("speechSynthesis" in window && window.__fodinhaAtualizarVozes) {
+                    window.speechSynthesis.removeEventListener?.("voiceschanged", window.__fodinhaAtualizarVozes);
+                }
+            } catch (e) { }
         };
     }, []);
         const [confirmacao, setConfirmacao] = useState(null);
