@@ -142,75 +142,36 @@ function App() {
     }
 
     function falarNativoAndroid(texto) {
+        return tocarVozComFallback(texto);
+    }
+
+    function tocarVozComFallback(texto) {
         try {
+            const frase = String(texto || "").trim();
+            if (!frase) return false;
             if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return false;
-            const utter = new SpeechSynthesisUtterance(String(texto));
+
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(frase);
             utter.lang = "pt-BR";
             utter.rate = 0.95;
             utter.pitch = 1;
             utter.volume = 1;
+
             const vozes = window.speechSynthesis.getVoices ? window.speechSynthesis.getVoices() : [];
-            const pt = vozes.find(v => /pt[-_]BR/i.test(v.lang)) || vozes.find(v => /^pt/i.test(v.lang));
-            if (pt) utter.voice = pt;
+            const vozGoogleFeminina = vozes.find(v =>
+                /^pt(?:[-_]BR)?$/i.test(v.lang || "") &&
+                /Google/i.test(v.name || "") &&
+                /portugu/i.test(v.name || "")
+            );
+
+            if (!vozGoogleFeminina) return false;
+            utter.voice = vozGoogleFeminina;
             window.speechSynthesis.speak(utter);
             return true;
         } catch (e) {
             return false;
         }
-    }
-
-    function tocarUrlVoz(url) {
-        return new Promise((resolve, reject) => {
-            try {
-                if (!audioVozRef.current) {
-                    const audio = document.createElement("audio");
-                    audio.preload = "auto";
-                    audio.volume = 1;
-                    audio.setAttribute("playsinline", "");
-                    audio.setAttribute("webkit-playsinline", "");
-                    audioVozRef.current = audio;
-                }
-                const audio = audioVozRef.current;
-                try { audio.pause(); } catch (e) { }
-                let terminou = false;
-                const finalizar = (ok, err) => {
-                    if (terminou) return;
-                    terminou = true;
-                    audio.onended = null;
-                    audio.onerror = null;
-                    if (ok) resolve(true); else reject(err || new Error("audio_error"));
-                };
-                audio.onended = () => finalizar(true);
-                audio.onerror = () => finalizar(false, new Error("audio_error"));
-                audio.muted = false;
-                audio.volume = 1;
-                audio.src = url;
-                const p = audio.play();
-                if (p && typeof p.catch === "function") p.catch(err => finalizar(false, err));
-                setTimeout(() => {
-                    if (!terminou && audio.readyState === 0) finalizar(false, new Error("timeout"));
-                }, 5000);
-            } catch (e) {
-                reject(e);
-            }
-        });
-    }
-
-    async function tocarVozComFallback(texto) {
-        const frase = String(texto || "").trim();
-        if (!frase) return false;
-        const q = encodeURIComponent(frase.slice(0, 180));
-        const urls = [
-            `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=pt-BR&q=${q}`,
-            `https://api.streamelements.com/kappa/v2/speech?voice=Vitoria&text=${q}`
-        ];
-        for (const url of urls) {
-            try {
-                await tocarUrlVoz(url);
-                return true;
-            } catch (e) { }
-        }
-        return falarNativoAndroid(frase);
     }
 
     function enviarVozKodular(texto) {
@@ -233,7 +194,7 @@ function App() {
         // Text To Speech do aplicativo, fora do WebViewer.
         if (enviarVozKodular(texto)) return;
         // No navegador comum, mantém o fallback de áudio/voz existente.
-        tocarVozComFallback(texto).catch(() => {});
+        tocarVozComFallback(texto);
     }
 
     function alternarVoz() {
@@ -244,7 +205,7 @@ function App() {
             desbloquearSomAplicativo();
             // No APK, envia diretamente ao Text To Speech nativo do Kodular.
             if (!enviarVozKodular("Som ativado")) {
-                tocarVozComFallback("Som ativado").catch(() => {});
+                tocarVozComFallback("Som ativado");
             }
         } else {
             if (audioVozRef.current) {
@@ -904,8 +865,21 @@ function App() {
         setJogadores(prev => prev.map(j => {
             if (j.id !== id)
                 return j;
-            const novaVida = Math.max(0, j.vidas + valor);
-            falar(`${j.nome}, ${novaVida} ${novaVida === 1 ? "vida" : "vidas"}`);
+            const vidaAnterior = Number(j.vidas || 0);
+            const novaVida = Math.max(0, vidaAnterior + valor);
+            const numeroFaladoVida = (numero) => {
+                const nomes = {
+                    0: "zero", 1: "uma", 2: "duas", 3: "três", 4: "quatro",
+                    5: "cinco", 6: "seis", 7: "sete", 8: "oito", 9: "nove", 10: "dez"
+                };
+                return nomes[Number(numero)] || String(numero);
+            };
+            const textoVidas = `${numeroFaladoVida(novaVida)} ${novaVida === 1 ? "vida" : "vidas"}`;
+            if (Number(valor || 0) < 0 && novaVida < vidaAnterior) {
+                falar(`${j.nome}, perdeu uma vida e ficou com ${textoVidas}`);
+            } else {
+                falar(`${j.nome}, ${textoVidas}`);
+            }
             // Vida zerada NÃO apaga a luz automaticamente.
             // O jogador continua ativo até apertar o número dele.
             return {
@@ -915,11 +889,28 @@ function App() {
         }));
     }
     function alterarVazas(id, valor) {
+        const numeroFaladoVazas = (numero) => {
+            const nomes = {
+                0: "zero", 1: "uma", 2: "duas", 3: "três", 4: "quatro",
+                5: "cinco", 6: "seis", 7: "sete", 8: "oito", 9: "nove", 10: "dez"
+            };
+            const absoluto = Math.abs(Number(numero || 0));
+            const textoNumero = nomes[absoluto] || String(absoluto);
+            return numero < 0 ? `menos ${textoNumero}` : textoNumero;
+        };
         setJogadores(prev => prev.map(j => {
             if (j.id !== id) return j;
-            const novasVazas = Math.max(0, j.vazas + valor);
-            falar(`${j.nome}, ${novasVazas} ${novasVazas === 1 ? "vaza" : "vazas"}`);
-            return { ...j, vazas: novasVazas };
+            const novasVazas = Number(j.vazas || 0) + Number(valor || 0);
+            const perdeuVida = Number(valor || 0) < 0 && novasVazas < 0;
+            const novasVidas = perdeuVida ? Math.max(0, Number(j.vidas || 0) - 1) : Number(j.vidas || 0);
+            const textoVaza = Math.abs(novasVazas) === 1 ? "vaza" : "vazas";
+            if (perdeuVida) {
+                falar(`${j.nome}, ${numeroFaladoVazas(novasVazas)} ${textoVaza}, perdeu mais uma vida. Agora está com ${novasVidas} ${novasVidas === 1 ? "vida" : "vidas"}`);
+            }
+            else {
+                falar(`${j.nome}, ${numeroFaladoVazas(novasVazas)} ${textoVaza}`);
+            }
+            return { ...j, vazas: novasVazas, vidas: novasVidas };
         }));
     }
     function registrarCampeao(vencedorForcado = null, campeoesForcados = null) {
