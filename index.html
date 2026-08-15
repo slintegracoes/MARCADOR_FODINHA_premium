@@ -682,53 +682,66 @@ function App() {
         });
         return mapa;
     }, [historicoCampeoes]);
-    const contasAcumuladas = useMemo(() => {
+    function liquidarContas(listaContas) {
         const mapa = {};
-        historicoCampeoes.forEach(jogo => {
-            if (!jogo.contas)
+        (listaContas || []).forEach(conta => {
+            const nomeA = conta.devedor;
+            const nomeB = conta.recebedor;
+            const valor = Number(conta.valor || 0);
+            if (!nomeA || !nomeB || valor <= 0 || nomeA === nomeB)
                 return;
-            jogo.contas.forEach(conta => {
-                const nomeA = conta.devedor;
-                const nomeB = conta.recebedor;
-                const valor = Number(conta.valor || 0);
-                // Junta os mesmos nomes em uma chave única,
-                // independente de quem ganhou primeiro.
-                const nomesOrdenados = [nomeA, nomeB].sort();
-                const chave = `${nomesOrdenados[0]}|||${nomesOrdenados[1]}`;
-                if (!mapa[chave]) {
-                    mapa[chave] = {
-                        jogadorA: nomesOrdenados[0],
-                        jogadorB: nomesOrdenados[1],
-                        saldo: 0
-                    };
-                }
-                // Se o devedor é o jogadorA, saldo positivo quer dizer:
-                // jogadorA deve para jogadorB.
-                // Se o devedor é jogadorB, desconta do saldo.
-                if (nomeA === mapa[chave].jogadorA) {
-                    mapa[chave].saldo += valor;
-                }
-                else {
-                    mapa[chave].saldo -= valor;
-                }
-            });
-        });
-        return Object.values(mapa)
-            .map(item => {
-            if (item.saldo > 0) {
-                return {
-                    devedor: item.jogadorA,
-                    recebedor: item.jogadorB,
-                    valor: Math.abs(item.saldo)
+            const nomesOrdenados = [nomeA, nomeB].sort();
+            const chave = `${nomesOrdenados[0]}|||${nomesOrdenados[1]}`;
+            if (!mapa[chave]) {
+                mapa[chave] = {
+                    jogadorA: nomesOrdenados[0],
+                    jogadorB: nomesOrdenados[1],
+                    saldo: 0
                 };
             }
-            return {
-                devedor: item.jogadorB,
-                recebedor: item.jogadorA,
-                valor: Math.abs(item.saldo)
-            };
+            // Compensa automaticamente os dois sentidos.
+            // Ex.: A deve B 10 e B deve A 10 = saldo zero.
+            if (nomeA === mapa[chave].jogadorA)
+                mapa[chave].saldo += valor;
+            else
+                mapa[chave].saldo -= valor;
         });
+        return Object.values(mapa)
+            .filter(item => Math.abs(item.saldo) > 0.0001)
+            .map(item => item.saldo > 0
+                ? { devedor: item.jogadorA, recebedor: item.jogadorB, valor: Math.abs(item.saldo) }
+                : { devedor: item.jogadorB, recebedor: item.jogadorA, valor: Math.abs(item.saldo) });
+    }
+    const contasHistoricasBrutas = useMemo(() => {
+        const lista = [];
+        historicoCampeoes.forEach(jogo => {
+            (jogo.contas || []).forEach(conta => lista.push(conta));
+        });
+        return lista;
     }, [historicoCampeoes]);
+    const contasAcumuladas = useMemo(() => {
+        return liquidarContas(contasHistoricasBrutas);
+    }, [contasHistoricasBrutas]);
+    const contasTotais = useMemo(() => {
+        // Enquanto o jogo atual ainda não foi finalizado, inclui a prévia dele
+        // junto do histórico. As regras LIVRE/VER já entram em contasJogadores.
+        return liquidarContas([
+            ...contasHistoricasBrutas,
+            ...(contasJogadores || [])
+        ]);
+    }, [contasHistoricasBrutas, contasJogadores]);
+    const resumoGanhos = useMemo(() => {
+        const saldos = {};
+        contasTotais.forEach(conta => {
+            const valor = Number(conta.valor || 0);
+            saldos[conta.recebedor] = (saldos[conta.recebedor] || 0) + valor;
+            saldos[conta.devedor] = (saldos[conta.devedor] || 0) - valor;
+        });
+        return Object.entries(saldos)
+            .map(([nome, saldo]) => ({ nome, saldo }))
+            .filter(item => Math.abs(item.saldo) > 0.0001)
+            .sort((a, b) => b.saldo - a.saldo);
+    }, [contasTotais]);
     function adicionarJogador() {
         if (!novoJogador.trim())
             return;
@@ -1464,11 +1477,18 @@ function App() {
                 React.createElement("h2", { className: "\n            text-green-400\n            text-sm\n            font-black\n            mb-4\n          " }, "\uD83C\uDFC6 CAMPE\u00D5ES"),
                 React.createElement("div", { className: "\n            bg-black\n            border\n            border-purple-500\n            rounded-lg\n            p-3\n            mb-4\n            shadow-[0_0_12px_#a855f755]\n          " },
                     React.createElement("h2", { className: "\n              text-purple-300\n              text-sm\n              font-black\n              mb-2\n              text-center\n            " }, "\uD83D\uDCB0 QUEM DEVE PRA QUEM"),
-                    (contasJogadores.length === 0 && contasAcumuladas.length === 0) ? (React.createElement("p", { className: "\n                text-zinc-500\n                text-xs\n                text-center\n              " }, "Vai somando e descontando automaticamente entre os mesmos jogadores.")) : (React.createElement("div", { className: "space-y-2" }, (contasJogadores.length > 0 ? contasJogadores : contasAcumuladas).map((conta, idx) => (React.createElement("div", { key: idx, className: "\n                      bg-zinc-950\n                      border\n                      border-zinc-700\n                      rounded-md\n                      px-2\n                      py-2\n                      text-xs\n                      flex\n                      flex-wrap\n                      justify-center\n                      items-center\n                      gap-1\n                    " },
+                    contasTotais.length === 0 ? (React.createElement("p", { className: "\n                text-zinc-500\n                text-xs\n                text-center\n              " }, "Tudo zerado entre os jogadores no momento.")) : (React.createElement("div", { className: "space-y-2" }, contasTotais.map((conta, idx) => (React.createElement("div", { key: idx, className: "\n                      bg-zinc-950\n                      border\n                      border-zinc-700\n                      rounded-md\n                      px-2\n                      py-2\n                      text-xs\n                      flex\n                      flex-wrap\n                      justify-center\n                      items-center\n                      gap-1\n                    " },
                         React.createElement("span", { className: "text-red-400 font-black" }, conta.devedor),
                         React.createElement("span", { className: "text-zinc-400" }, "deve para"),
                         React.createElement("span", { className: "text-green-400 font-black" }, conta.recebedor),
                         React.createElement("span", { className: "text-yellow-400 font-black" }, formatarDinheiro(conta.valor)))))))),
+                    React.createElement("div", { className: "\n              mt-3\n              bg-zinc-950\n              border\n              border-yellow-500\n              rounded-lg\n              p-3\n              shadow-[0_0_10px_#eab30833]\n            " },
+                        React.createElement("h3", { className: "text-yellow-300 text-xs font-black text-center mb-2" }, "📊 RESUMO DE GANHOS"),
+                        resumoGanhos.length === 0 ? (React.createElement("p", { className: "text-zinc-500 text-xs text-center" }, "Nenhum saldo pendente. Ganhos e dívidas estão zerados.")) : (React.createElement("div", { className: "space-y-1" }, resumoGanhos.map((item, idx) => (React.createElement("div", { key: idx, className: "flex justify-between items-center bg-black border border-zinc-800 rounded-md px-2 py-2 text-xs" },
+                            React.createElement("span", { className: "font-black text-white" }, item.nome),
+                            item.saldo > 0
+                                ? React.createElement("span", { className: "text-green-400 font-black" }, `GANHA ${formatarDinheiro(item.saldo)}`)
+                                : React.createElement("span", { className: "text-red-400 font-black" }, `DEVE ${formatarDinheiro(Math.abs(item.saldo))}`))))))),
                 historicoCampeoes.length === 0 ? (React.createElement("p", { className: "text-zinc-500" }, "Nenhum campe\u00E3o registrado.")) : (React.createElement("div", { className: "\n              space-y-3\n              max-h-[300px]\n              overflow-y-auto\n            " }, historicoCampeoes.map((item, index) => (React.createElement("div", { key: index, className: "\n                    bg-black\n                    border\n                    border-green-900\n                    rounded-sm\n                    p-3\n                  " },
                     React.createElement("h2", { className: "\n                    text-green-400\n                    text-sm\n                    font-black\n                  " }, Array.isArray(item.campeoes) && item.campeoes.length > 0 ? item.campeoes.join(" • ") : item.nome),
                     React.createElement("p", { className: "\n                    text-yellow-400\n                    mt-[2px]\n                  " },
